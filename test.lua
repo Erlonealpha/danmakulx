@@ -124,7 +124,7 @@ local function process_block_level(danmakus, level)
     end
 end
 
-local url_patt = rex.new[[^([a-z][a-z0-9+\.-]*:\/\/)?([\da-z\.-]+)\.([a-z\.]{2,6})([\/\w \.-]*)*\/?$]]
+local url_patt = rex.safe_new[[^([a-z][a-z0-9+\.-]*:\/\/)?([\da-z\.-]+)\.([a-z\.]{2,6})([\/\w\.\-\?&\+=\#~%]*)$]]
 function commands.add(...)
     debug_msg('TEST add')
     ---@type asyncio.Task<_ProcessResult?>[]
@@ -219,7 +219,7 @@ function M.test(command, ...)
     end
     if commands[command] ~= nil then
         local args = {...}
-        local ok, err = xpcall(function()
+        local _, err = xpcall(function()
             commands[command](table.unpack(args))
         end, debug.traceback)
         if err then
@@ -263,3 +263,5 @@ amp.register_script_message('testss', function(k, v)
         osd.res_y = tonumber(v)
     end
 end)
+
+require '_tmp'

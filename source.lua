@@ -16,7 +16,7 @@ function SourceManager:__init()
 	---@type SourceProviderBase[]
 	self.source_providers = {
 		bilibili.provider(),
-		-- bahamut.provider(),
+		bahamut.provider(),
 		dandanplay.provider(),
 	}
 end

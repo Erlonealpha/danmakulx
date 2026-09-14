@@ -2,22 +2,35 @@ local std = require 'elxlibs.std'
 local source_m = require 'source'
 local render_m = require 'render'
 
+---@alias DanmakuType
+--- | 0 SCROLL  滚动弹幕
+--- | 1 TOP     顶部弹幕
+--- | 2 BOTTOM  底部弹幕
 
----@alias Danmaku {
----     text: string,
----     color: int,
----     type: int,
----     time: int,
----     extra: table,
----     delay: number?,
----     enable: boolean?, 
---- }
-
+---@class Danmaku
+---@field text string
+---@field color string HEX BGR
+---@field type DanmakuType
+---@field time int
+---@field extra table
+---@field delay number?
+---@field enable boolean?
 
 ---@class Danmakus : std.object
 ---@overload fun(data: Danmaku[]):self
 local Danmakus = std.class.new('Danmakus')
-function Danmakus:__init()
+---@param data Danmaku[]
+function Danmakus:__init(data)
+    self.data = data
+end
+
+function Danmakus:enable()
+end
+
+function Danmakus:disable()
+end
+
+function Danmakus:set_delay()
 end
 
 function Danmakus:filter()

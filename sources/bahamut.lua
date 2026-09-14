@@ -141,7 +141,7 @@ return async(function()
     local api = 'https://ani.gamer.com.tw/ajax/danmuGet.php'
     local result = await(curl.post(api, {
         data = {sn = sn}, 
-        cookies = {cf_clearance = cookie},
+        cookies = {BAHARUNE = cookie},
     }))
     if not result.data or not result.success then
         return {ok=false, error=result.error}
@@ -155,13 +155,14 @@ end
 local BahamutProvider = std.class.new("BahamutProvider", {base.SourceProviderBase})
 function BahamutProvider:__init(cookies_context)
     self.name = "bahamut"
-    self.cookies_context = cookies_context
+    self.cookies_context = cookies_context or {}
 end
 
-local url_pattern = rex.new('ani.gamer.com.tw')
+local url_pattern = rex.safe_new[[^https?://(?:[^/]*\.)?(?:ani\.gamer\.com\.tw)\S*]]
 
 function BahamutProvider:process_url(url)
 return async(function()
+    debug_msgf('BahamutProvider:process_url try %s', url)
     if not url_pattern:match(url) then
         return
     end
@@ -177,21 +178,43 @@ return async(function()
 end)
 end
 
+---@param data BahamutDanmakuData
+---@return Danmaku[]
+local function parse_danmaku_data(data)
+    local danmakus = {}
+    for _, d in ipairs(data) do
+        table.insert(danmakus, {
+            text = d.text,
+            color = utils.hex_rgb2bgr(tonumber(d.color:sub(2), 16) or 0xffff),
+            time = d.time / 10,
+            type = d.position,
+            extra = {
+                sn = d.sn,
+                size = d.size,
+                userid = d.userid
+            }
+        })
+    end
+    return danmakus
+end
+
 ---@param sn int
 ---@param url string?
 function BahamutProvider:process_sn(sn, url)
 return async(function()
-    local cookies = self.cookies_context.get('bahamut')
+    local cookies = self.cookies_context['bahamut']
     local result = await(
         M.get_danmaku(tostring(sn), cookies))
     if not result.result or not result.ok then
         return base.new_process_error(string.format('bahamut api error: %s', result.error))
     end
     return base.new_process_result(
-        "json", 
-        result.result, 
-        new_source(sn, url), 
-        true
+        parse_danmaku_data(result.result), 
+        new_source(sn, url)
     )
 end)
 end
+
+M.provider = BahamutProvider
+
+return M

@@ -40,7 +40,7 @@ local function parse_res(res_opt, def)
     end
 end
 
----@alias OsdRenderOptions {
+---@alias RenderOptions {
 ---     fontname: string,
 ---     scrolltime: number,
 ---     fixedtime: number,
@@ -48,8 +48,9 @@ end
 ---     border: boolean,
 ---     opacity: number,
 ---     shadow: number,
----     outline: number,
 ---     displayarea: number,
+---     outline: number,
+---     max_screen_danmaku: int,
 ---     density: string,
 ---     follow_scale: boolean,
 ---     res_x: number,
@@ -58,7 +59,7 @@ end
 
 local M = {}
 
----@return OsdRenderOptions
+---@return RenderOptions
 function M.get_optinos()
     return {
         fontname = options.fontname,
@@ -68,8 +69,9 @@ function M.get_optinos()
         border = options.border,
         opacity = select(tonumber(options.opacity), 0.8),
         shadow = select(tonumber(options.shadow), 0),
-        outline = select(tonumber(options.outline), 1.0),
         displayarea = select(tonumber(options.displayarea), 0.4),
+        outline = select(tonumber(options.outline), 1.0),
+        max_screen_danmaku = select(tonumber(options.max_screen_danmaku), 0),
         density = options.density,
         follow_scale = options.follow_scale,
         res_x = parse_res(options.res_x, 1920),

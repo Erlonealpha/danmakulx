@@ -4,12 +4,21 @@ local asyncio = require 'elxlibs.asyncio'
 local amp = require 'elxlibs.asyncio.amp'
 local locks = require 'elxlibs.asyncio.locks'
 local algo = require 'modules/layout_algo'
-local utils = require 'modules/utils'
 local options = require 'modules.options'
 local base = require 'render_backend/_base'
 
 
 local RENDER_SLICE = 30
+local INVALIDATE_SOURCE = 0
+local INVALIDATE_PREPARE = 1
+local INVALIDATE_LAYOUT = 2
+local INVALIDATE_ASS = 3
+
+---@alias INVALIDATE_TYPE
+--- | 0 SOURCE
+--- | 1 PREPARE
+--- | 2 LAYOUT
+--- | 3 ASS
 
 
 local function get_max_tracks(display_area, res_y, height)
@@ -17,14 +26,15 @@ local function get_max_tracks(display_area, res_y, height)
 end
 
 ---@alias _OsdRenderingDanmaku Danmaku & Partial<_PreparedT> & _CalcedT
+---@alias _CalcedOsdRenderDanmaku _CalcedDanmaku & { ass_text?: string, ass_dirty?: boolean }
 
 ---@class DanmakuOsdRender : DanmakuRenderBackend
 ---@field _render_ctx {
----     dirty: boolean,
+---     sliced_dirty: boolean,
 ---     calc_offset_scroll: int,
 ---     calc_offset_fixed: int,
 ---     screen: DanmakuScreen,
----     danmakus: _CalcedDanmaku[],
+---     danmakus: _CalcedOsdRenderDanmaku[],
 ---     sliced: _SlicedDanmaku,
 ---     overlay: mp_osd_overlay,
 --- }
@@ -45,6 +55,7 @@ function DanmakuOsdRender:__init()
     self._render_task_err = nil
     self._source_map = {}
     self._source_dirty = true
+    self._prepare_dirty = true
 end
 
 function DanmakuOsdRender:_init()
@@ -53,6 +64,7 @@ function DanmakuOsdRender:_init()
     self.is_rendering = false
     self.is_enable = true
     self._source_dirty = true
+    self._prepare_dirty = true
 
     self.pause = mp.get_property_bool('pause')
     self.fps = mp.get_property_number('display-fps', 120)
@@ -61,7 +73,7 @@ function DanmakuOsdRender:_init()
     self.osd_h = osd.h
     self.refresh_tick = 1 / self.fps
 
-    ---@type OsdRenderOptions
+    ---@type RenderOptions
     local render_opts = base.get_optinos()
     self._render_opts = render_opts
     self._options_keys = {}
@@ -69,6 +81,8 @@ function DanmakuOsdRender:_init()
         table.insert(self._options_keys, k)
     end
     self.res_x = render_opts.res_x
+    --         self.res_y: base, can only changed by user
+    -- _render_opts.res_y: can changed by state change
     self.res_y = render_opts.res_y
     if not render_opts.follow_scale and self.osd_h then
         render_opts.res_y = self.osd_h
@@ -92,7 +106,7 @@ function DanmakuOsdRender:_init()
     -- debug_msgf('DanmakuOsdRender:__init max_tracks %d', max_tracks)
     self._event = locks.Event()
     self._render_ctx = {
-        dirty = true,
+        sliced_dirty = true,
         calc_offset_scroll = 1,
         calc_offset_fixed = 1,
         screen = algo.new_screen(
@@ -213,15 +227,24 @@ function DanmakuOsdRender:disable(from_empty)
     self.is_enable = false
 end
 
+---@param danmakus Danmaku[]
+local function validate_danmakus(danmakus)
+    for i = #danmakus, 1, -1 do
+        if not algo.validate(danmakus[i]) then
+            table.remove(danmakus, i)
+        end
+    end
+end
+
 function DanmakuOsdRender:add_source(source, data)
     debug_msgf('DanmakuOsdRender:add_source(%s, %d)', source.id, #data)
     if self._source_map[source.id] ~= nil then
         -- Warn or opts.dup_source_handle(update or others)
         mp.msg.warn('DanmakuOsdRender: added duplicate source')
     else
+        validate_danmakus(data)
         self._source_map[source.id] = {source = source, data = data, enable = true}
-        self._source_dirty = true
-        self:_calc_dirty()
+        self:_invalidate(INVALIDATE_SOURCE)
         if self._disable_from_empty then
             self:enable()
         end
@@ -235,8 +258,7 @@ function DanmakuOsdRender:remove_source(source)
         mp.msg.warn('DanmakuOsdRender: cannot remove not exists source', source.id, source.name)
     else
         self._source_map[source.id] = nil
-        self._source_dirty = true
-        self:_calc_dirty()
+        self:_invalidate(INVALIDATE_SOURCE)
         self:_request_tick()
     end
 end
@@ -246,8 +268,7 @@ function DanmakuOsdRender:enable_source(source)
     local s = self._source_map[source.id]
     if s ~= nil and not s.enable then
         s.enable = true
-        self._source_dirty = true
-        self:_calc_dirty()
+        self:_invalidate(INVALIDATE_SOURCE)
         if self._disable_from_empty then
             self:enable()
         end
@@ -260,8 +281,7 @@ function DanmakuOsdRender:disable_source(source)
     local s = self._source_map[source.id]
     if s ~= nil and s.enable then
         s.enable = false
-        self._source_dirty = true
-        self:_calc_dirty()
+        self:_invalidate(INVALIDATE_SOURCE)
         self:_request_tick()
     end
 end
@@ -271,7 +291,10 @@ function DanmakuOsdRender:set_source_delay(source, delay)
     local s = self._source_map[source.id]
     if s ~= nil then
         s.source.delay = delay
-        self:_all_dirty()
+        for _, d in ipairs(s.data) do
+            d.delay = delay
+        end
+        self:_invalidate(INVALIDATE_SOURCE, INVALIDATE_PREPARE)
         self:_request_tick()
     end
 end
@@ -290,76 +313,165 @@ function DanmakuOsdRender:get_source(id)
     return self._source_map[id]
 end
 
----@param opts Partial<OsdRenderOptions>
+---@param opts Partial<RenderOptions>
 function DanmakuOsdRender:update_options(opts)
+    local invalidate_map = {}
+    local finals = {}
     for k, v in pairs(opts) do
         if self._render_opts[k] == nil then
             mp.msg.warn('DanmakuOsdRender update_options: unknown option', k)
-        elseif type(self._render_opts[k]) ~= type(v) then
+        end
+        ---@diagnostic disable-next-line: undefined-field
+        local target_typ = type(self._render_opts[k])
+        local typ = type(v)
+        if target_typ ~= typ then
             mp.msg.warn('DanmakuOsdRender update_options: type mismatch for', k, 
-                ---@diagnostic disable-next-line: undefined-field
-                'expect', type(self._render_opts[k]),
-                'got', type(v))
+                'expect', target_typ,
+                'got', typ)
         else
-            self:_update_option(k, v)
+            ---@cast k keyof RenderOptions
+            self:_update_option(k, v, invalidate_map, finals)
         end
     end
+
+    if #finals > 0 then
+        for _, fn in ipairs(finals) do
+            fn()
+        end
+    end
+
+    if next(invalidate_map) ~= nil then
+        local invalidate_t = {}
+        for e, _ in pairs(invalidate_map) do
+            table.insert(invalidate_t, e)
+        end
+        self:_invalidate(table.unpack(invalidate_t))
+    end
+
+    self:_request_tick()
 end
 
+---@type table<keyof RenderOptions, _option_update_dispatch_cb>
+local option_update_dispatch_map
+do
+    ---@alias _option_update_dispatch_cb fun(
+    ---     self: DanmakuOsdRender, 
+    ---     map: table<INVALIDATE_TYPE, true>, 
+    ---     val: any,
+    ---     finals: function[]
+    --- )
+    ---@type table<string, _option_update_dispatch_cb>
+    local helper = {}
+    function helper.prepare(self, map, val)
+        map[INVALIDATE_PREPARE] = true
+    end
+    function helper.layout(self, map, val)
+        map[INVALIDATE_LAYOUT] = true
+    end
+    function helper.ass(self, map, val)
+        map[INVALIDATE_ASS] = true
+    end
+
+    option_update_dispatch_map = {
+        fontname = helper.ass,
+        opacity = helper.ass,
+        shadow = helper.ass,
+        border = helper.ass,
+        outline = helper.ass,
+        scrolltime = helper.prepare,
+        fixedtime = helper.prepare,
+        density = helper.layout,
+        max_screen_danmaku = helper.layout,
+        fontsize = function(self, map, val)
+            if self._render_ctx ~= nil then
+                local screen = self._render_ctx.screen
+                screen.fixed:_update("height", val)
+                screen.scroll:_update("height", val)
+            end
+            map[INVALIDATE_LAYOUT] = true
+        end,
+        displayarea = function(self, map, val, finals)
+            if self._render_ctx ~= nil then
+                local screen = self._render_ctx.screen
+                table.insert(finals, function()
+                    local max = get_max_tracks(val, self._render_opts.res_y, self._render_opts.fontsize)
+                    screen.fixed:_update("max_tracks", max)
+                    screen.scroll:_update("max_tracks", max)
+                end)
+            end
+            map[INVALIDATE_LAYOUT] = true
+        end,
+        follow_scale = function(self, map, val, finals)
+            table.insert(finals, function()
+                if val and self._render_opts.res_y ~= self.res_y then
+                    self._render_opts.res_y = self.res_y
+                    map[INVALIDATE_LAYOUT] = true
+                end
+            end)
+        end,
+        res_x = function(self, map, val)
+            self['res_x']= val
+            if self._render_ctx ~= nil then
+                local screen = self._render_ctx.screen
+                screen.scroll:_update('res_x', val)
+                screen.fixed:_update('res_x', val)
+            end
+            map[INVALIDATE_LAYOUT] = true
+        end,
+        res_y = function(self, map, val, finals)
+            self['res_y']= val
+            if self._render_opts ~= nil and self._render_opts.follow_scale then
+                -- if res_y and final follow_scale
+                table.insert(finals, function()
+                    self._render_opts.res_y = val
+                end)
+                if self._render_ctx ~= nil then
+                    local screen = self._render_ctx.screen
+                    screen.scroll:_update('res_y', val)
+                    screen.fixed:_update('res_y', val)
+                end
+                map[INVALIDATE_LAYOUT] = true
+            end
+        end,
+    }
+end
+
+---@param key keyof RenderOptions
+---@param val any
+---@param invalidate_map table<INVALIDATE_TYPE, true>
+---@param finals function[]
+function DanmakuOsdRender:_update_option(key, val, invalidate_map, finals)
+    debug_msgf('DanmakuOsdRender:_update_option(%s, %s)', key, val)
+    option_update_dispatch_map[key](self, invalidate_map, val, finals)
+    self._render_opts[key] = val
+end
+
+function DanmakuOsdRender:_on_options_change(changes)
+    local change_t = {}
+    for _, change in ipairs(changes) do
+        change_t[change] = options[change]
+    end
+    self:update_options(change_t)
+end
+
+-- Note: call in _render may not work caused by pause
+-- -> set pause after event:wait() in asyncio event loop
+-- -> _render call _request_tick()
+-- -> _event:clear()
 function DanmakuOsdRender:_request_tick()
     if self.is_enable then
         self._event:set()
     end
 end
 
----@param key string
----@param val any
-function DanmakuOsdRender:_update_option(key, val)
-    debug_msgf('DanmakuOsdRender:_update_option(%s, %s)', key, val)
-    if key == 'res_x' then
-        self.res_x = val
-        self:_res_x_dirty(val)
-    elseif key == 'res_y' then
-        self.res_y = val
-        if self._render_opts.follow_scale and val ~= self._render_opts.res_y then
-            self:_res_y_dirty(val)
-        end
-    elseif key == "scrolltime" or key == "fixedtime" or key == "density" then
-        self:_all_dirty()
-    elseif key == "fontsize" then
-        self._render_ctx.screen.fixed:_update("height", val)
-        self._render_ctx.screen.scroll:_update("height", val)
-        self:_all_dirty()
-    elseif key == "displayarea" then
-        local max = get_max_tracks(val, self._render_opts.res_y, self._render_opts.fontsize)
-        self._render_ctx.screen.fixed:_update("max_tracks", max)
-        self._render_ctx.screen.scroll:_update("max_tracks", max)
-        self:_all_dirty()
-    elseif key == "follow_scale" then
-        if val and self._render_opts.res_y ~= self.res_y then
-            self:_res_y_dirty(self.res_y)
-        end
-    else
-        self:_st_dirty()
-    end
-    self._render_opts[key] = val
-    self:_request_tick()
-end
-
-function DanmakuOsdRender:_on_options_change(changes)
-    for _, change in ipairs(changes) do
-        self:_update_option(change, options[change])
-    end
-end
-
 ---@alias _IdxMap table<int, int>
 
 ---@alias _SlicedDanmaku {
----     scroll:  table<int, _CalcedDanmaku[] & { idx_map: _IdxMap }> & {global_idx_list: int[]},
----     fixed: table<int, _CalcedDanmaku[] & { idx_map: _IdxMap }> & {global_idx_list: int[]}
+---     scroll:  table<int, _CalcedOsdRenderDanmaku[] & { idx_map: _IdxMap }> & {global_idx_list: int[]},
+---     fixed: table<int, _CalcedOsdRenderDanmaku[] & { idx_map: _IdxMap }> & {global_idx_list: int[]}
 --- }
 
----@param danmakus _CalcedDanmaku[]
+---@param danmakus _CalcedOsdRenderDanmaku[]
 ---@param slice int
 ---@return _SlicedDanmaku
 local function build_sliced(danmakus, slice)
@@ -368,7 +480,7 @@ local function build_sliced(danmakus, slice)
     local insert = table.insert
     for idx, d in ipairs(danmakus) do
         local r
-        if d.type < 4 then
+        if d.type == 0 then
             r = result.scroll
         else
             r = result.fixed
@@ -391,7 +503,21 @@ local function build_sliced(danmakus, slice)
     return result
 end
 
----@alias _CalcedOsdRenderDanmaku _CalcedDanmaku & { st_text?: string, st_dirty: boolean }
+---@param danmakus _OsdRenderingDanmaku[]
+---@param scrolltime number
+---@param fixedtime number
+---@param force boolean?
+local function prepare_danmakus(danmakus, scrolltime, fixedtime, force)
+    for _, d in ipairs(danmakus) do
+        if force or d.prepared ~= true then
+            algo.prepare(d, scrolltime, fixedtime)
+        end
+    end
+    ---@diagnostic disable-next-line: param-type-mismatch
+    table.sort(danmakus, function(a, b)
+        return a.start_time < b.start_time
+    end)
+end
 
 function DanmakuOsdRender:_render()
     -- debug_msg('DanmakuOsdRender:_render()')
@@ -400,6 +526,7 @@ function DanmakuOsdRender:_render()
     local opts = self._render_opts
     local ctx = self._render_ctx
     local insert = table.insert
+
     if self._source_dirty then
         ctx.danmakus = {}
         for _, st in pairs(self._source_map) do
@@ -407,40 +534,33 @@ function DanmakuOsdRender:_render()
             if st.enable then
                 for _, d in ipairs(st.data) do
                     if d.enable ~= false then
-                        if st.source.delay ~= nil then
-                            d.delay = st.source.delay
-                        end
-                        if d._prepared ~= true then
-                            algo.prepare(d, opts.scrolltime, opts.fixedtime)
-                        end
-                        if d._prepared then
-                            ---@diagnostic disable-next-line: inject-field
-                            ---@cast d _PreparedDanmaku
-                            insert(ctx.danmakus, d)
-                            c = c + 1
-                        end
+                        insert(ctx.danmakus, d)
+                        c = c + 1
                     end
                 end
             end
             debug_msgf('DanmakuOsdRender:_render() source: (id: %s name: %s count: %d actual: %d)', 
                 st.source.id, st.source.name, #st.data, c)
         end
+        self._prepare_dirty = false
+        prepare_danmakus(ctx.danmakus, opts.scrolltime, opts.fixedtime, false)
         if #ctx.danmakus <= 0 then
             -- no source enabled
             debug_msg('DanmakuOsdRender:_render() no danmaku prepared')
             self:disable(true)
             return
         end
-        ---@diagnostic disable-next-line: param-type-mismatch
-        table.sort(ctx.danmakus, function(a, b)
-            return a.time < b.time
-        end)
         self._source_dirty = false
-        ctx.dirty = true
+        ctx.sliced_dirty = true
     end
-    if ctx.dirty then
+
+    if self._prepare_dirty then
+        prepare_danmakus(ctx.danmakus, opts.scrolltime, opts.fixedtime, true)
+    end
+
+    if ctx.sliced_dirty ~= false then
         ctx.sliced = build_sliced(ctx.danmakus, slice)
-        ctx.dirty = false
+        ctx.sliced_dirty = false
     end
 
     local pos = mp.get_property_number("time-pos")
@@ -508,9 +628,10 @@ function DanmakuOsdRender:_render_ass(pos, sliced_pos, ass_events, is_scroll)
             local offset = is_scroll and ctx.calc_offset_scroll or ctx.calc_offset_fixed
             if offset <= idx then
                 for _i = offset, idx do
-                    ---@type _CalcedDanmaku
+                    ---@type _CalcedOsdRenderDanmaku
                     local _d = all_danmakus[global_idx_list[_i]--[[@cast -?]]]
-                    _d._dirty = true
+                    -- force layout_dirty
+                    _d.layout_dirty = true
                     ---@diagnostic disable-next-line: param-type-mismatch
                     algo.calc_danmaku(_d, ctx.screen, opts)
                 end
@@ -525,20 +646,19 @@ function DanmakuOsdRender:_render_ass(pos, sliced_pos, ass_events, is_scroll)
                 -- d.start_time, d.end_time, d.escaped_text, d.type, d.is_move)
             if d.is_move ~= nil then
                 local ass_text
-                if d.st_dirty ~= false then
-                    local b, g, r = utils.hex_rgb2bgr(d.color)
-                    d.st_text = str_fmt(
-                        "{fn%s\\fs%d\\c&H%s%s%s&\\alpha&H%s\\bord%s\\shad%s\\b%s\\q2}%s",
+                if d.ass_dirty ~= false then
+                    d.ass_text = str_fmt(
+                        "{fn%s\\fs%d\\c&H%s&\\alpha&H%s\\bord%s\\shad%s\\b%s\\q2}%s",
                         opts.fontname,
                         opts.fontsize,
-                        b, g, r,
+                        d.color,
                         str_fmt("%02X", (1 - opts.opacity) * 255),
                         opts.outline,
                         opts.shadow,
                         opts.border,
                         d.escaped_text
                     )
-                    d.st_dirty = false
+                    d.ass_dirty = false
                 end
                 if d.is_move then
                     local move = d.move
@@ -548,7 +668,7 @@ function DanmakuOsdRender:_render_ass(pos, sliced_pos, ass_events, is_scroll)
                         "{\\pos(%.1f,%.1f)\\an7}%s",
                         move.x1 + (move.x2 - move.x1) * progress,
                         move.y1 + (move.y2 - move.y1) * progress,
-                        d.st_text
+                        d.ass_text
                     )
                 else
                     local d_pos = d.pos
@@ -557,69 +677,71 @@ function DanmakuOsdRender:_render_ass(pos, sliced_pos, ass_events, is_scroll)
                         "{\\pos(%.1f,%.1f)\\an8}%s",
                         d_pos.x,
                         d_pos.y,
-                        d.st_text
+                        d.ass_text
                     )
                 end
                 insert(ass_events, ass_text)
+                if opts.max_screen_danmaku > 0 and #ass_events >= opts.max_screen_danmaku then
+                    break
+                end
             end
         end
     end
 end
 
-function DanmakuOsdRender:_all_dirty()
-    local ctx = self._render_ctx
-    self._source_dirty = true
-    for _, d in ipairs(ctx.danmakus) do
-        d._prepared = false
-        d._dirty = true
-        d.is_move = nil
-        ---@diagnostic disable-next-line: inject-field
-        d._st_dirty = true
+
+---@param ... INVALIDATE_TYPE
+function DanmakuOsdRender:_invalidate(...)
+    if not self.is_running then
+        return
     end
-    self:_calc_dirty()
-end
-
-function DanmakuOsdRender:_st_dirty()
-    local ctx = self._render_ctx
-    for _, d in ipairs(ctx.danmakus) do
-        ---@diagnostic disable-next-line: inject-field
-        d._st_dirty = true
+    debug_msg('DanmakuOsdRender:_invalidate(', ..., ')')
+    local args = {...}
+    local set = {}
+    local function add_inline(n)
+        if set[n] == nil then
+            args[#args+1] = n
+            set[n] = true
+        end
     end
-end
-
----@param res_x number
-function DanmakuOsdRender:_res_x_dirty(res_x)
-    self._render_opts.res_x = res_x
+    for i = 1, #args do
+        set[args[i]] = true
+    end
     local ctx = self._render_ctx
-    ctx.screen.scroll:_update("res_x", res_x)
-    ctx.screen.fixed:_update("res_x", res_x)
-    self:_all_dirty()
-end
+    local danmaku_fields = {}
+    local i = 1
+    while i <= #args do
+        local n = args[i]
+        if n == INVALIDATE_SOURCE then
+            self._source_dirty = true
+            add_inline(INVALIDATE_LAYOUT)
+        elseif n == INVALIDATE_PREPARE then
+            self._prepare_dirty = true
+            add_inline(INVALIDATE_LAYOUT)
+            danmaku_fields['prepared'] = false
+        elseif n == INVALIDATE_LAYOUT then
+            ctx.calc_offset_scroll = 1
+            ctx.calc_offset_fixed = 1
+            ctx.screen.scroll:clear()
+            ctx.screen.fixed:clear()
+        elseif n == INVALIDATE_ASS then
+            danmaku_fields['ass_dirty'] = true
+        else
+            mp.msg.warn('DanmakuOsdRender:_invalidate got unknown invalidate type', n)
+        end
+        i = i--[[@cast -?]] + 1
+    end
 
----@param res_y number
-function DanmakuOsdRender:_res_y_dirty(res_y)
-    self._render_opts.res_y = res_y
-    local ctx = self._render_ctx
-    ctx.screen.scroll:_update("res_y", res_y)
-    ctx.screen.fixed:_update("res_y", res_y)
-    self:_all_dirty()
-end
-
-function DanmakuOsdRender:_calc_dirty()
-    self:_calc_scroll_dirty()
-    self:_calc_fixed_dirty()
-end
-
-function DanmakuOsdRender:_calc_scroll_dirty()
-    local ctx = self._render_ctx
-    ctx.calc_offset_scroll = 1
-    ctx.screen.scroll:clear()
-end
-
-function DanmakuOsdRender:_calc_fixed_dirty()
-    local ctx = self._render_ctx
-    ctx.calc_offset_fixed = 1
-    ctx.screen.fixed:clear()
+    if next(danmaku_fields) ~= nil then
+        for _, d in ipairs(ctx.danmakus) do
+            for field, val in pairs(danmaku_fields) do
+                ---@diagnostic disable-next-line: inject-field
+                d[field] = val
+            end
+        end
+    end
+    
+    self:_request_tick()
 end
 
 function DanmakuOsdRender:_handle_render_err(from_stop)
@@ -662,7 +784,8 @@ function DanmakuOsdRender:_on_osd_dimentions(osd)
         self.osd_h = osd.h
         if not self._render_opts.follow_scale then
             if self._render_opts.res_y ~= osd.h then
-                self:_res_y_dirty(osd.h)
+                self._render_opts.res_y = osd.h
+                self:_invalidate(INVALIDATE_LAYOUT)
             end
         end
         self:_request_tick()

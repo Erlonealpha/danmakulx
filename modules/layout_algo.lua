@@ -269,8 +269,14 @@ function M.new_screen(res_x, res_y, height, max_tracks)
     }
 end
 
----@alias _PreparedT { _prepared: true, start_time: number, end_time: number, escaped_text: string }
+---@alias _PreparedT { prepared: true, start_time: number, end_time: number, escaped_text: string }
 ---@alias _PreparedDanmaku (Danmaku & _PreparedT)
+
+---@param event Danmaku
+---@return boolean
+function M.validate(event)
+    return not (event.type == nil or event.type < 0 or event.type > 2)
+end
 
 ---@param event Danmaku IN OUT
 ---@param scrolltime number
@@ -280,19 +286,19 @@ function M.prepare(event, scrolltime, fixedtime)
     ---@cast event _PreparedDanmaku
     event.escaped_text = utils.ass_escape(event.text)
     event.start_time = event.time + (event.delay or 0)
-    if event.type > 0 and event.type <= 3 then
+    if event.type == 0 then
         event.end_time = event.time + scrolltime + (event.delay or 0)
-    elseif event.type > 3 and event.type <= 5 then
+    elseif event.type == 1 or event.type == 2 then
         event.end_time = event.time + fixedtime + (event.delay or 0)
     else
         return
     end
-    event._prepared = true
+    event.prepared = true
     return event
 end
 
 ---@alias _CalcedT {
----     _dirty?: boolean,
+---     layout_dirty?: boolean,
 ---     is_move?: boolean, 
 ---     move?: {x1: number, x2: number, y1: number, y2: number},
 ---     pos?: {x: number, y: number},
@@ -300,8 +306,8 @@ end
 ---@alias _CalcedDanmaku (_PreparedDanmaku & _CalcedT)
 
 ---@param event Danmaku & {
----     _prepared?: boolean, 
----     _dirty?: boolean,
+---     prepared?: boolean, 
+---     layout_dirty?: boolean,
 ---     start_time?: number,
 ---     end_time?: number,
 ---     is_move?: boolean,
@@ -321,14 +327,14 @@ function M.calc_danmaku(event, screen, opts)
     -- debug_msgf('calc_danmaku (%.1f, %.1f) %d %s', event.start_time, event.end_time, event.type, event.text)
     local danmaku = event
     ---@cast danmaku _CalcedDanmaku
-    if not event._prepared then
+    if not event.prepared then
         M.prepare(danmaku, opts.scrolltime, opts.fixedtime)
     end
 
-    if event._dirty ~= false then
+    if event.layout_dirty ~= false then
         local res_x = opts.res_x
         local text_width = utils.get_str_width(event.text, screen.scroll.height)
-        if event.type > 0 and event.type <= 3 then
+        if event.type == 0 then
             local y = M.get_scroll_y(
                 screen.scroll, 
                 text_width, 
@@ -342,7 +348,7 @@ function M.calc_danmaku(event, screen, opts)
                 danmaku.move = { x1 = x1, x2 = x2, y1 = y, y2 = y}
                 danmaku.is_move = true
             end
-        elseif event.type == 5 then
+        elseif event.type == 1 then
             local y = M.get_fixed_y(
                 screen.fixed,
                 danmaku.start_time,
@@ -355,7 +361,7 @@ function M.calc_danmaku(event, screen, opts)
                 danmaku.pos = { x = x, y = y }
                 danmaku.is_move = false
             end
-        elseif event.type == 4 then
+        elseif event.type == 2 then
             local y = M.get_fixed_y(
                 screen.fixed,
                 danmaku.start_time,
@@ -370,7 +376,7 @@ function M.calc_danmaku(event, screen, opts)
             end
         end
         if danmaku.is_move ~= nil then
-            danmaku._dirty = false
+            danmaku.layout_dirty = false
         end
     end
 

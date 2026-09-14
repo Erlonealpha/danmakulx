@@ -291,9 +291,9 @@ function BilibiliSourceProvider:__init(session_data)
     self.name = 'bilibili'
 end
 
--- local id_pattern = rex.new[[((BV)([A-Za-z0-9]{10}))|((av)(\d+))|((ep)(\d+))|((ss)(\d+))]]
-local url_pattern = rex.new[[^https?://(?:[^/]*\.)?(bilibili\.com|b23\.tv)\S*]]
-local id_pattern = rex.new[[((?|(BV)([A-Za-z0-9]{10})|(av)([0-9]+)|(ep)([0-9]+)|(ss)([0-9]+)))]]
+-- local id_pattern = rex.safe_new[[((BV)([A-Za-z0-9]{10}))|((av)(\d+))|((ep)(\d+))|((ss)(\d+))]]
+local url_pattern = rex.safe_new[[^https?://(?:[^/]*\.)?(bilibili\.com|b23\.tv)\S*]]
+local id_pattern = rex.safe_new[[((?|(BV)([A-Za-z0-9]{10})|(av)([0-9]+)|(ep)([0-9]+)|(ss)([0-9]+)))]]
 
 ---@param url string
 function BilibiliSourceProvider:process_url(url)
@@ -303,15 +303,15 @@ return async(function()
     if m == nil then
         return
     elseif m == 'b23.tv' then
-        
+        -- TODO get true link
     end
 
     local full, type, id = id_pattern:match(url)
     if not id then
         return
     end
-    debug_msgf('BilibiliSourceProvider:process_url parsed %s %s', type, id)
     local query = utils.parse_query(url)
+    debug_msgf('BilibiliSourceProvider:process_url parsed %s %s %s', type, id, query.p or 0)
     if type == 'BV' then
         return await(self:process_bvid(full, query.p, url))
     elseif type == 'av' then
@@ -476,6 +476,15 @@ return async(function()
 end)
 end
 
+local danmaku_type_map = {
+    [1] = 0,
+    [2] = 0,
+    [3] = 0,
+    [4] = 2,
+    [5] = 1,
+    [6] = 0,
+}
+
 --[[
 字符串内每项用逗号,分隔
 
@@ -524,11 +533,12 @@ function M.parse_danmaku_xml(xml_data)
         CharacterData = function(parser, s)
             if curr_danmaku_p ~= nil then
                 local parts = std.split(curr_danmaku_p, ',')
+
                 insert(danmakus, {
                     text = s,
                     ---@diagnostic disable-next-line: param-type-mismatch
-                    color = tonumber(parts[4]),
-                    type = tonumber(parts[2]),
+                    color = utils.hex_rgb2bgr(tonumber(parts[4])),
+                    type = danmaku_type_map[tonumber(parts[2])],
                     time = tonumber(parts[1]),
                     extra = {
                         fontsize = tonumber(parts[3]),
