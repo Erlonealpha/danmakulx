@@ -1,3 +1,4 @@
+local mp = require 'mp'
 local std = require 'elxlibs.std'
 local utils = require 'modules/utils'
 
@@ -59,9 +60,15 @@ function DanmakuTracks:update(opts)
     end
 end
 
----@param k string
+---@param k 
+--- | "res_x"
+--- | "res_y"
+--- | "height"
+--- | "max_tracks"
+--- | "max_overlapped"
 ---@param v any
 function DanmakuTracks:_update(k, v)
+    debug_msgf('DanmakuTracks:_update(%s, %s)', k, v)
     if k == "res_x" then
         self.res_x = v
     elseif k == "res_y" or k == "height" then
@@ -75,7 +82,10 @@ function DanmakuTracks:_update(k, v)
         self._max_tracks_from_user = true
     elseif k == "max_overlapped" then
         self.max_overlapped = v
+    else
+        mp.msg.warn('DanmakuTracks:_update got unknown option', k)
     end
+    debug_msgf('DanmakuTracks:__init max_tracks %d of %d', self.max_tracks, self._max_tracks)
 end
 
 ---@param n int
@@ -109,6 +119,7 @@ function DanmakuTracks:iter(start, end_, step, overlap)
     local e = end_ or self.max_tracks
     local s = step or 1
     local f = s > 0
+    -- debug_msgf('DanmakuTracks:iter(%d, %d, %d, %s)', i, e, s, overlap)
     local overlap_n = 0
     return function ()
         if (f and i > e) or (not f and i < e) then
@@ -131,6 +142,7 @@ end
 
 ---@param n int
 function DanmakuTracks:track_y(n)
+    -- debug_msgf('pick track %d', n)
     return 1 + (n - 1) * self.height
 end
 
@@ -332,6 +344,7 @@ function M.calc_danmaku(event, screen, opts)
     end
 
     if event.layout_dirty ~= false then
+        danmaku.is_move = nil
         local res_x = opts.res_x
         local text_width = utils.get_str_width(event.text, screen.scroll.height)
         if event.type == 0 then

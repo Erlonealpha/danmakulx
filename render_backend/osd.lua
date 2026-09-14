@@ -3,6 +3,7 @@ local std = require 'elxlibs.std'
 local asyncio = require 'elxlibs.asyncio'
 local amp = require 'elxlibs.asyncio.amp'
 local locks = require 'elxlibs.asyncio.locks'
+local fun = require 'elxlibs.fun'
 local algo = require 'modules/layout_algo'
 local options = require 'modules.options'
 local base = require 'render_backend/_base'
@@ -19,6 +20,13 @@ local INVALIDATE_ASS = 3
 --- | 1 PREPARE
 --- | 2 LAYOUT
 --- | 3 ASS
+
+local _INVALIDATE_STR_MAP = {
+    [INVALIDATE_SOURCE] = 'SOURCE',
+    [INVALIDATE_PREPARE] = 'PREPARE',
+    [INVALIDATE_LAYOUT] = 'LAYOUT',
+    [INVALIDATE_ASS] = 'ASS',
+}
 
 
 local function get_max_tracks(display_area, res_y, height)
@@ -90,7 +98,7 @@ function DanmakuOsdRender:_init()
 
     local max_tracks
     if render_opts.displayarea < 1 and render_opts.displayarea > 0 then
-        max_tracks = get_max_tracks(render_opts.displayarea, self.res_y, render_opts.fontsize)
+        max_tracks = get_max_tracks(render_opts.displayarea, render_opts.res_y, render_opts.fontsize)
     end
     debug_msg('DanmakuOsdRender:__init', 
         mp.get_property_number('display-width', 1920),
@@ -644,7 +652,7 @@ function DanmakuOsdRender:_render_ass(pos, sliced_pos, ass_events, is_scroll)
 
             -- debug_msgf('DanmakuOsdRender:_render_ass() time(%.2f, %.2f) %s type: %d move: %s', 
                 -- d.start_time, d.end_time, d.escaped_text, d.type, d.is_move)
-            if d.is_move ~= nil then
+            if d.layout_dirty == false and d.is_move ~= nil then
                 local ass_text
                 if d.ass_dirty ~= false then
                     d.ass_text = str_fmt(
@@ -695,9 +703,17 @@ function DanmakuOsdRender:_invalidate(...)
     if not self.is_running then
         return
     end
-    debug_msg('DanmakuOsdRender:_invalidate(', ..., ')')
     local args = {...}
+    if #args <= 0 then
+        return
+    end
     local set = {}
+    debug_msg(function()
+        ---@diagnostic disable-next-line: param-type-mismatch
+        return string.format("DanmakuOsdRender:_invalidate(%s)", fun.str_concat(fun.map(function(x)
+            return _INVALIDATE_STR_MAP[x]
+        end, args), ', '))
+    end)
     local function add_inline(n)
         if set[n] == nil then
             args[#args+1] = n
@@ -712,18 +728,23 @@ function DanmakuOsdRender:_invalidate(...)
     local i = 1
     while i <= #args do
         local n = args[i]
+        -- SOURCE
         if n == INVALIDATE_SOURCE then
             self._source_dirty = true
             add_inline(INVALIDATE_LAYOUT)
+        -- PREPARE
         elseif n == INVALIDATE_PREPARE then
             self._prepare_dirty = true
             add_inline(INVALIDATE_LAYOUT)
             danmaku_fields['prepared'] = false
+        -- LAYOUT
         elseif n == INVALIDATE_LAYOUT then
             ctx.calc_offset_scroll = 1
             ctx.calc_offset_fixed = 1
             ctx.screen.scroll:clear()
             ctx.screen.fixed:clear()
+            danmaku_fields['layout_dirty'] = true
+        -- ASS
         elseif n == INVALIDATE_ASS then
             danmaku_fields['ass_dirty'] = true
         else
@@ -732,15 +753,13 @@ function DanmakuOsdRender:_invalidate(...)
         i = i--[[@cast -?]] + 1
     end
 
-    if next(danmaku_fields) ~= nil then
+    for field, val in pairs(danmaku_fields) do
         for _, d in ipairs(ctx.danmakus) do
-            for field, val in pairs(danmaku_fields) do
-                ---@diagnostic disable-next-line: inject-field
-                d[field] = val
-            end
+            ---@diagnostic disable-next-line: inject-field
+            d[field] = val
         end
     end
-    
+
     self:_request_tick()
 end
 
@@ -782,9 +801,18 @@ function DanmakuOsdRender:_on_osd_dimentions(osd)
     if osd ~= nil then
         self.osd_w = osd.w
         self.osd_h = osd.h
-        if not self._render_opts.follow_scale then
-            if self._render_opts.res_y ~= osd.h then
-                self._render_opts.res_y = osd.h
+        local render_opts = self._render_opts
+        local ctx = self._render_ctx
+        if not render_opts.follow_scale then
+            if render_opts.res_y ~= osd.h then
+                render_opts.res_y = osd.h
+                ctx.screen.scroll:_update("res_y", osd.h)
+                ctx.screen.fixed:_update("res_y", osd.h)
+                if render_opts.displayarea > 0 and render_opts.displayarea < 1 then
+                    local max_tracks = get_max_tracks(render_opts.displayarea, osd.h, render_opts.fontsize)
+                    ctx.screen.scroll:_update("max_tracks", max_tracks)
+                    ctx.screen.fixed:_update("max_tracks", max_tracks)
+                end
                 self:_invalidate(INVALIDATE_LAYOUT)
             end
         end
@@ -835,7 +863,7 @@ function DanmakuOsdRender:_unregister_events()
 end
 
 function DanmakuOsdRender:_add_vf_fps()
-    mp.commandv("vf", "append", string.format("@danmakulx:fps=fps=%d", self.fps or 120))
+    mp.commandv("vf", "append", string.format("@danmakulx:fps=%d", self.fps or 120))
 end
 
 function DanmakuOsdRender:_remove_vf_fps()
