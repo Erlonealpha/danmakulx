@@ -74,33 +74,24 @@ local function _signature_headers(headers, path)
     end
 end
 
+---@param result RequestResult
+---@return FutureResult<any>
+local function basic_result_process(result)
+    if not result.data or not result.success then
+        return {ok=false, error=result.error}
+    end
+    return {ok=true, result=json.loads(result.data)}
+end
+
 --[[
     BANGUMI
 --]]
 
----@alias DandanplayBangumiShinData {
----     errorCode: int,
----     success: boolean,
----     errorMessage: string,
----     errorDetail: string,
----     bangumiList: {
----         animeId: int,
----         bangumiId: string,
----         animeTitle: string,
----         imageUrl: string,
----         searchKeyword: string,
----         isOnAir: boolean,
----         airDay: int,
----         isFavorited: boolean,
----         isRestricted: boolean,
----         rating: int
----     }[]
---- }
-
 -- 此接口用于获取官方的新番列表
+---@see DandanAPI.DandanAPI_Bangumi_GetShinBangumi
 ---@async
 ---@param filter_adult_content boolean?
----@return asyncio.Coroutine<FutureResult<DandanplayBangumiShinData>>
+---@return asyncio.Coroutine<FutureResult<DandanAPIBangumiListResponse>>
 function M.bangumi_shin(filter_adult_content)
 return async(
 function ()
@@ -108,14 +99,11 @@ function ()
     _signature_headers(headers)
     local result = await(curl.get(
         api_v2('/shin'), {
-            params = {filterAdultContent = tostring(filter_adult_content)},
+            params = {filterAdultContent = filter_adult_content},
             headers = headers,
         }
     ))
-    if not result.data or not result.success then
-        return {ok=false, error=result.error}
-    end
-    return {ok=true, result=json.loads(result.data)}
+    return basic_result_process(result)
 end)
 end
 
@@ -123,72 +111,69 @@ end
     FILE MATCH
 --]]
 
----@alias DandaplayAnimeType 
---- | "tvseries"
---- | "tvspecial" 
---- | "ova" 
---- | "movie" 
---- | "musicvideo" 
---- | "web" 
---- | "other" 
---- | "jpmovie" 
---- | "jpdrama" 
---- | "unknown" 
---- | "tmdbtv" 
---- | "tmdbmovie"
-
----@alias DandanplayMatchData {
----     errorCode: int,
----     success: boolean,
----     errorMessage: string,
----     errorDetail: string,
----     isMatched: boolean,
----     matches: {
----         episodeId: int,
----         animeId: int,
----         animeTitle: string,
----         episodeTitle: string,
----         type: DandaplayAnimeType,
----         typeDescription: string,
----         shift: int,
----         imageUrl: string
----     }[]
---- }
-
+---@see DandanAPI.DandanAPI_Match_Match
 ---@async
----@param body {
----     filename: string,
----     filehash: string?,
----     filesize: int?,
----     video_duration: int?,
----     match_mode: "hashAndFileName"|"fileNameOnly"|"hashOnly"?
---- }
----@return asyncio.Coroutine<FutureResult<DandanplayMatchData>>
+---@param body DandanAPI_Match_Match_Body
+---@return asyncio.Coroutine<FutureResult<DandanAPIMatchResponseV2>>
 function M.match(body)
 return async(
 function ()
-    body.filehash = body.filehash or ''
-    body.filesize = body.filesize or 0
-    body.video_duration = body.video_duration or 0
-    body.match_mode = body.match_mode or "hashAndFileName"
+    body.fileSize = body.fileSize or 0
+    body.videoDuration = body.videoDuration or 0
+    body.matchMode = body.matchMode or "hashAndFileName"
+    local headers = {}
+    _signature_headers(headers)
+    local result = await(curl.post(
+        api_v2('/match'), {
+            headers = headers,
+            body = body
+        }
+    ))
+    return basic_result_process(result)
+end)
+end
+
+---@see DandanAPI.DandanAPI_Match_BatchMatch
+---@async
+---@param body DandanAPI_Match_BatchMatch_Body
+---@return asyncio.Coroutine<FutureResult<DandanAPIBatchMatchResponse>>
+function M.match_batch(body)
+return async(function()
+    if not body.requests then
+        return {ok=false, error='Dandanplay api: match batch body.requests is required'}
+    end
+    for _, req in ipairs(body.requests) do
+        req.fileSize = req.fileSize or 0
+        req.videoDuration = req.videoDuration or 0
+        req.matchMode = req.matchMode or "hashAndFileName"
+    end
+    local headers = {}
+    _signature_headers(headers)
+    local result = await(curl.post(
+        api_v2('/match/batch'), {
+            headers = headers,
+            body = body,
+        }
+    ))
+    return basic_result_process(result)
+end)
+end
+
+---@see DandanAPI.DandanAPI_Search_SearchAnime
+---@async
+---@param params DandanAPI_Search_SearchAnime_Parameters
+---@return asyncio.Coroutine<FutureResult<DandanAPISearchAnimeResponse>>
+function M.search(params)
+return async(function()
     local headers = {}
     _signature_headers(headers)
     local result = await(curl.get(
-        api_v2('/match'), {
+        api_v2('/match/batch'), {
             headers = headers,
-            body = {
-                fileName = body.filename,
-                fileHash = body.filehash,
-                fileSize = tostring(body.filesize),
-                videoDuration = tostring(body.video_duration),
-                matchMode = body.match_mode,
-            }
+            params = params,
         }
     ))
-    if not result.data or not result.success then
-        return {ok=false, error=result.error}
-    end
-    return {ok=true, result=json.loads(result.data)}
+    return basic_result_process(result)
 end)
 end
 
