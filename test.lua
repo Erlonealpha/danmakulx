@@ -6,6 +6,12 @@ local source_m = require 'source'
 local rex = require("elxlib.elxlibs.rex")
 local asyncio = require("elxlib.elxlibs.asyncio")
 local render = require("render")
+local anitomy = require("modules.anitomy")
+local dandanplay = require("sources.dandanplay")
+local normalize_path = require("modules.parse")
+
+require 'test_set_dandanapi'
+
 
 local M = {}
 
@@ -211,6 +217,44 @@ function commands.update(key, val)
         val = n
     end
     test_render:update_options({[key] = val})
+end
+
+function commands.match(name)
+    local p = source_manager:get('dandanplay', dandanplay.provider)
+    if p == nil then
+        return
+    end
+    name = name or await(normalize_path(mp.get_property('path')))
+    local res = await(p:match(
+        name, 
+        nil, 
+        math.floor(mp.get_property_number('file-size')), 
+        math.floor(mp.get_property_number('duration')), 
+        nil, 
+        true
+    ))
+    if res.error then
+        mp.msg.warn(res.error)
+    else
+        mp.msg.info(json.dumps(res.result, 2))
+    end
+end
+
+function commands.search(...)
+    local result = await(dandanplay.search({
+        keyword = table.concat({...}, ' ')
+    }))
+    if result.error then
+        mp.msg.warn(result.error)
+    else
+        mp.msg.info(json.dumps(result.result, 2))
+    end
+end
+
+function commands.anitomy(name)
+    name = name or mp.get_property('title')
+    local result = await(anitomy(name))
+    mp.msg.info(json.dumps(result, 2))
 end
 
 function M.test(command, ...)

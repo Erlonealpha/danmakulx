@@ -19,6 +19,18 @@ function SourceManager:__init()
 		bahamut.provider(),
 		dandanplay.provider(),
 	}
+	self.source_map = {}
+	for _, s in ipairs(self.source_providers) do
+		self.source_map[s.name] = s
+	end
+end
+
+---@generic T : SourceProviderBase
+---@param name string
+---@param cast T?
+---@return T?
+function SourceManager:get(name, cast)
+	return self.source_map[name]
 end
 
 ---@async

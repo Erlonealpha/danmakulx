@@ -1,7 +1,9 @@
-local curl = require 'modules/curl'
+local curl = require 'modules.curl'
 local std = require 'elxlibs.std'
 local json = require 'elxlibs.json'
 local hashlib = require 'elxlibs.hashlib'
+local normalize = require 'modules.parse'
+local base = require 'sources._base'
 
 local M = { source_name = "dandanplay"}
 
@@ -30,30 +32,31 @@ local API_BASE = 'https://api.dandanplay.net'
 
 ---@param path string
 local function api_v2(path)
-    return API_BASE .. '/api/v2' .. path
+    return '/api/v2' .. path
+end
+local function api_url(path)
+    return API_BASE .. path
 end
 
-local _appid = nil
-local _appsecret = nil
+local _app = {}
 
 ---@param appid string
 ---@param secret string
 function M.set_appid(appid, secret)
-    _appid = appid
-    _appsecret = secret
+    _app.appid = appid
+    _app.appsecret = secret
 end
 
 ---@return string?
 function M.generate_signature(path, time, appid, secret)
-    appid = appid or _appid
-    secret = secret or _appsecret
+    appid = appid or _app.appid
+    secret = secret or _app.appsecret
     if not appid or not secret then
         return nil
     end
     local sig = string.format('%s%s%s%s', appid, time, path, secret)
     return hashlib.base64_encode(
-        hashlib.sha256(sig)
-    )
+        hashlib.hex2bin(hashlib.sha256(sig)))
 end
 
 ---@param path string
@@ -64,21 +67,24 @@ function M._C_generate_signature(path, time)
     return ''
 end
 
----@param headers table<string, string>
+---@param headers table<string, string|number>
+---@param path string
 local function _signature_headers(headers, path)
-    if _appid and _appsecret then
+    local appid = _app.appid
+    local sec = _app.appsecret
+    if appid ~= nil and sec ~= nil then
         local time = os.time()
-        headers["X-AppId"] = _appid
-        headers["X-Signature"] = M.generate_signature(path, time, _appid, _appsecret)
-        headers["X-Timestamp"] = tostring(time)
+        headers["X-AppId"] = appid
+        headers["X-Signature"] = M.generate_signature(path, time, appid, sec)
+        headers["X-Timestamp"] = time
     end
 end
 
 ---@param result RequestResult
 ---@return FutureResult<any>
 local function basic_result_process(result)
-    if not result.data or not result.success then
-        return {ok=false, error=result.error}
+    if result.data == nil or result.data == "" or not result.success then
+        return {ok=false, error=result.error or 'invalid result'}
     end
     return {ok=true, result=json.loads(result.data)}
 end
@@ -96,11 +102,13 @@ function M.bangumi_shin(filter_adult_content)
 return async(
 function ()
     local headers = {}
-    _signature_headers(headers)
+    local path = api_v2('/shin')
+    _signature_headers(headers, path)
     local result = await(curl.get(
-        api_v2('/shin'), {
+        api_url(path), {
             params = {filterAdultContent = filter_adult_content},
             headers = headers,
+            user_agent = 'MPV-danmakulx 0.1.0'
         }
     ))
     return basic_result_process(result)
@@ -122,11 +130,13 @@ function ()
     body.videoDuration = body.videoDuration or 0
     body.matchMode = body.matchMode or "hashAndFileName"
     local headers = {}
-    _signature_headers(headers)
+    local path = api_v2('/match')
+    _signature_headers(headers, path)
     local result = await(curl.post(
-        api_v2('/match'), {
+        api_url(path), {
             headers = headers,
-            body = body
+            body = body,
+            user_agent = 'MPV-danmakulx 0.1.0'
         }
     ))
     return basic_result_process(result)
@@ -148,9 +158,10 @@ return async(function()
         req.matchMode = req.matchMode or "hashAndFileName"
     end
     local headers = {}
-    _signature_headers(headers)
+    local path = api_v2('/match/batch')
+    _signature_headers(headers, path)
     local result = await(curl.post(
-        api_v2('/match/batch'), {
+        api_url(path), {
             headers = headers,
             body = body,
         }
@@ -166,9 +177,69 @@ end
 function M.search(params)
 return async(function()
     local headers = {}
-    _signature_headers(headers)
+    local path = api_v2('/search/anime')
+    _signature_headers(headers, path)
     local result = await(curl.get(
-        api_v2('/match/batch'), {
+        api_url(path), {
+            headers = headers,
+            params = params,
+        }
+    ))
+    return basic_result_process(result)
+end)
+end
+
+---@see DandanAPI.DandanAPI_Search_SearchAdvanced
+---@async
+---@param params DandanAPI_Search_SearchAdvanced_Parameters
+---@return asyncio.Coroutine<FutureResult<DandanAPISearchBangumiResponse>>
+function M.search_advanced(params)
+return async(function()
+    local headers = {}
+    local path = api_v2('/search/adv')
+    _signature_headers(headers, path)
+    local result = await(curl.get(
+        api_url(path), {
+            headers = headers,
+            params = params,
+            user_agent = 'MPV-danmakulx 0.1.0'
+        }
+    ))
+    return basic_result_process(result)
+end)
+end
+
+---@see DandanAPI.DandanAPI_Search_SearchEpisodes
+---@param params DandanAPI_Search_SearchEpisodes_Parameters
+---@return asyncio.Coroutine<FutureResult<DandanAPISearchEpisodesResponse>>
+function M.search_episodes(params)
+return async(function()
+    local headers = {}
+    local path = api_v2('/search/episodes')
+    _signature_headers(headers, path)
+    local result = await(curl.get(
+        api_url(path), {
+            headers = headers,
+            params = params,
+        }
+    ))
+    return basic_result_process(result)
+end)
+end
+
+---@see DandanAPI.DandanAPI_Comment_GetComment
+---@param params DandanAPI_Comment_GetComment_Parameters 
+---@return asyncio.Coroutine<FutureResult<DandanAPICommentResponseV2>>
+function M.get_comment(params)
+return async(function()
+    if params.episodeId == nil or type(params.episodeId) ~= "number" then
+        return {ok = false, error = string.format('DandanAPI.get_comment: invalid episodeId %s', params.episodeId)}
+    end
+    local headers = {}
+    local path = api_v2(string.format('/search/comment/%d', params.episodeId))
+    _signature_headers(headers, path)
+    local result = await(curl.get(
+        api_url(path), {
             headers = headers,
             params = params,
         }
@@ -185,10 +256,73 @@ function DananplayProvider:__init()
     self.name = 'dandanplay'
 end
 
-function DananplayProvider:process_url(url)
+function DananplayProvider:process_url(url, nodata)
 return async(function()
     
 end)
+end
+
+function DananplayProvider:process_path(path, nodata)
+return async(function()
+    local filename, err = await(normalize(path))
+    if err then
+        return base.new_process_error(err)
+    end
+    ---@cast filename -?
+    
+end)
+end
+
+---@param path string
+local function get_file_pre16M_hash(path)
+    
+end
+
+---@param path? string
+---@param filehash? string
+---@param filesize? int
+---@param duration? int
+---@param hashonly? boolean
+---@param nameonly? boolean
+---@param nodata? boolean
+function DananplayProvider:match(path, filehash, filesize, duration, hashonly, nameonly, nodata)
+return async(function()
+    local mode = hashonly and "hashOnly" or (nameonly and "fileNameOnly" or "hashAndFileName")
+    local body = {
+        fileName = path,
+        fileSize = filesize or 1, 
+        fileHash = filehash or '00000000000000000000000000000000',
+        videoDuration = duration or 0,
+        matchMode = mode,
+    }
+    if not nameonly and filehash == nil and path ~= nil then
+        body.fileHash = get_file_pre16M_hash(path)
+    end
+    if not body.fileName and not body.fileHash then
+        return base.new_process_error('DandanAPI match required path or filehash')
+    end
+    local result = await(M.match(body))
+    if not result.ok or not result.result then
+        return base.new_process_error(result.error or 'DandanAPI error')
+    end
+    local match = result.result
+    if not match.success or match.errorCode ~= 0 then
+        return base.new_process_error(string.format(
+            'DandanAPI error: %s%s', match.errorMessage or '', match.errorDetail or ''))
+    end
+    -- if match.isMatched then
+    --     return
+    -- end
+    return {result = match}
+end)
+end
+
+function DananplayProvider:search()
+    
+end
+
+function DananplayProvider:process_epid(epid, nodata)
+    
 end
 
 M.provider = DananplayProvider

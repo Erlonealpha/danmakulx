@@ -26,8 +26,8 @@ local M = {}
 
 ---@interface SourceProviderBase
 ---@field name string
----@field process_url fun(s: self, url: string):asyncio.Awaitable<ProcessResult?>?
----@field process_path fun(s: self, path: string):asyncio.Awaitable<ProcessResult?>?
+---@field process_url fun(s: self, url: string, nodata: boolean):asyncio.Awaitable<ProcessResult?>?
+---@field process_path fun(s: self, path: string, nodata: boolean):asyncio.Awaitable<ProcessResult?>?
 local SourceProviderBase = std.class.new("SourceProviderBase")
 function SourceProviderBase:process_url(url)
 end
