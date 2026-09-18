@@ -1,5 +1,5 @@
 local mp = require 'mp'
-local options = require 'modules/options'
+local options = require 'modules.options'
 
 
 ---@interface DanmakuRenderBackend

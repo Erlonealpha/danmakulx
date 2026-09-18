@@ -4,9 +4,9 @@ local asyncio = require 'elxlibs.asyncio'
 local amp = require 'elxlibs.asyncio.amp'
 local locks = require 'elxlibs.asyncio.locks'
 local fun = require 'elxlibs.fun'
-local algo = require 'modules/layout_algo'
+local algo = require 'modules.layout_algo'
 local options = require 'modules.options'
-local base = require 'render_backend/_base'
+local base = require 'render_backend._base'
 
 
 local RENDER_SLICE = 30
@@ -868,6 +868,12 @@ end
 
 function DanmakuOsdRender:_remove_vf_fps()
     mp.commandv("vf", "remove", "@danmakulx")
+end
+
+function DanmakuOsdRender:__gc()
+    if self.is_running then
+        self:stop()
+    end
 end
 
 return DanmakuOsdRender

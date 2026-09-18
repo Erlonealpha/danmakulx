@@ -2,9 +2,9 @@ local std = require 'elxlibs.std'
 local rex = require 'elxlibs.rex'
 local json = require 'elxlibs.json'
 local lxp = require 'elxlibs.lxp'
-local curl = require 'modules/curl'
-local base = require 'sources/_base'
-local utils = require 'modules/utils'
+local curl = require 'modules.curl'
+local base = require 'sources._base'
+local utils = require 'modules.utils'
 
 local tointeger = utils.tointeger
 
@@ -291,7 +291,6 @@ function BilibiliSourceProvider:__init(session_data)
     self.name = 'bilibili'
 end
 
--- local id_pattern = rex.safe_new[[((BV)([A-Za-z0-9]{10}))|((av)(\d+))|((ep)(\d+))|((ss)(\d+))]]
 local url_pattern = rex.safe_new[[^https?://(?:[^/]*\.)?(bilibili\.com|b23\.tv)\S*]]
 local id_pattern = rex.safe_new[[((?|(BV)([A-Za-z0-9]{10})|(av)([0-9]+)|(ep)([0-9]+)|(ss)([0-9]+)))]]
 
@@ -302,7 +301,7 @@ return async(function()
     local m = url_pattern:match(url)
     if m == nil then
         return
-    elseif m == 'b23.tv' then
+    elseif m == 'b23.tv' then -- short link
         -- TODO get true link
     end
 

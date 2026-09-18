@@ -1,7 +1,7 @@
-local curl = require 'modules/curl'
+local curl = require 'modules.curl'
 local std = require "elxlibs.std"
 local json = require 'elxlibs.json'
-local base = require 'sources/_base'
+local base = require 'sources._base'
 local rex = require "elxlibs.rex"
 local utils = require "modules.utils"
 

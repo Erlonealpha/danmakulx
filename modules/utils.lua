@@ -1,5 +1,5 @@
 local rex = require 'elxlibs.rex'
-local wwidth = require 'modules/w'
+local wwidth = require 'modules.w'
 
 local M = {}
 

@@ -1,6 +1,6 @@
 local mp = require 'mp'
 local std = require 'elxlibs.std'
-local utils = require 'modules/utils'
+local utils = require 'modules.utils'
 
 local M = {}
 

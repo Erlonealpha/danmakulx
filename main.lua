@@ -1,4 +1,3 @@
-
 local mp = require 'mp'
 mp.utils = require 'mp.utils'
 
@@ -12,7 +11,7 @@ try = elxlib.std.try
 catch = elxlib.std.catch
 finally = elxlib.std.finally
 
-local options = require 'modules/options'
+local options = require 'modules.options'
 
 
 function debug_msg(arg0, ...)

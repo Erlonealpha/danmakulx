@@ -1,8 +1,8 @@
 local mp = require 'mp'
 local std = require 'elxlibs.std'
-local algo = require 'modules/layout_algo'
-local options = require 'modules/options'
-local base = require 'render_backend/_base'
+local algo = require 'modules.layout_algo'
+local options = require 'modules.options'
+local base = require 'render_backend._base'
 
 
 ---@class DanmakuSubaddRender : DanmakuRenderBackend
