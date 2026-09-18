@@ -2,6 +2,7 @@ local mp = require 'mp'
 local amp = require 'elxlibs.asyncio.mp'
 local asyncio = require 'elxlibs.asyncio'
 local json = require 'elxlibs.json'
+local rex = require("elxlib.elxlibs.rex")
 
 local M = {}
 
@@ -34,6 +35,14 @@ local default_ua = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36
 ---     extras: string[]?,
 --- }
 
+local urlencode_patt = rex.safe_new("[^a-zA-Z0-9\\-\\._~]")
+local function urlencode(url)
+    local s = rex.gsub(url, urlencode_patt, function(c)
+        return string.format("%%%02X", string.byte(c))
+    end)
+    return s
+end
+
 ---@async
 ---@param url string
 ---@param method RequestMethod
@@ -47,7 +56,7 @@ function M.request(url, method, options)
     local params = options and options.params
     local timeout = options and options.timeout
     local disable_redirect = options and options.disable_redirect
-    local user_agent = options and options.user_agent or default_ua
+    local user_agent = options and (options.user_agent or default_ua)
     local proxy = options and options.proxy
     local extras = options and options.extras
 
@@ -55,24 +64,24 @@ function M.request(url, method, options)
         table.insert(args, '-L')
     end
 
-    if user_agent then
+    if user_agent ~= nil then
         table.insert(args, '-A')
         table.insert(args, user_agent)
     end
 
-    if proxy then
+    if proxy ~= nil then
         table.insert(args, '-x')
         table.insert(args, proxy)
     end
 
-    if headers then
+    if headers ~= nil then
         for k, v in pairs(headers) do
             table.insert(args, '-H')
-            table.insert(args, k..": "..v)
+            table.insert(args, string.format('%s: %s', k, v))
         end
     end
 
-    if body then
+    if body ~= nil then
         local _d
         if type(body) ~= "string" then
             _d = mp.utils.format_json(body)
@@ -97,9 +106,9 @@ function M.request(url, method, options)
     if params then
         local parts = {}
         for k, v in pairs(params) do
-            table.insert(parts, k.."="..v)
+            table.insert(parts, urlencode(k).."="..urlencode(tostring(v)))
         end
-        url = url.."?"..table.concat(parts, "&")
+        url = string.format('%s?%s', url, table.concat(parts, "&"))
     end
 
     if timeout then
