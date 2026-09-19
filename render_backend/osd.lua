@@ -10,10 +10,11 @@ local base = require 'render_backend._base'
 
 
 local RENDER_SLICE = 30
-local INVALIDATE_SOURCE = 0
-local INVALIDATE_PREPARE = 1
-local INVALIDATE_LAYOUT = 2
-local INVALIDATE_ASS = 3
+
+INVALIDATE_SOURCE = 0
+INVALIDATE_PREPARE = 1
+INVALIDATE_LAYOUT = 2
+INVALIDATE_ASS = 3
 
 ---@alias INVALIDATE_TYPE
 --- | 0 SOURCE
@@ -397,6 +398,7 @@ do
                 screen.scroll:_update("height", val)
             end
             map[INVALIDATE_LAYOUT] = true
+            map[INVALIDATE_ASS] = true
         end,
         displayarea = function(self, map, val, finals)
             if self._render_ctx ~= nil then
