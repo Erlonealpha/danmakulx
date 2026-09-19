@@ -1,11 +1,13 @@
 local curl = require 'modules.curl'
 local std = require 'elxlibs.std'
+local fun = require 'elxlib.elxlibs.fun'
+local rex = require 'elxlib.elxlibs.rex'
 local json = require 'elxlibs.json'
 local hashlib = require 'elxlibs.hashlib'
 local normalize = require 'modules.parse'
 local base = require 'sources._base'
 
-local M = { source_name = "dandanplay"}
+local M = { source_name = "dandanplay" }
 
 ---@class DandanplaySource : SourceBase
 ---@field url string
@@ -99,14 +101,31 @@ end
 ---@param filter_adult_content boolean?
 ---@return asyncio.Coroutine<FutureResult<DandanAPIBangumiListResponse>>
 function M.bangumi_shin(filter_adult_content)
-return async(
-function ()
+return async(function()
     local headers = {}
     local path = api_v2('/shin')
     _signature_headers(headers, path)
     local result = await(curl.get(
         api_url(path), {
             params = {filterAdultContent = filter_adult_content},
+            headers = headers,
+            user_agent = 'MPV-danmakulx 0.1.0'
+        }
+    ))
+    return basic_result_process(result)
+end)
+end
+
+---@see DandanAPI.DandanAPI_Bangumi_GetBangumiDetails
+---@param bangumi_id string|int 支持传入数字形式的 animeId（如 18319）或字符串形式的 bangumiId（如 "tmdb-movie-21832"）。
+---@return asyncio.Coroutine<FutureResult<DandanAPIBangumiDetailsResponse>>
+function M.bangumi_details(bangumi_id)
+return async(function()
+    local headers = {}
+    local path = api_v2('/bangumi/' .. tostring(bangumi_id))
+    _signature_headers(headers, path)
+    local result = await(curl.get(
+        api_url(path), {
             headers = headers,
             user_agent = 'MPV-danmakulx 0.1.0'
         }
@@ -237,6 +256,7 @@ return async(function()
     end
     local headers = {}
     local path = api_v2(string.format('/search/comment/%d', params.episodeId))
+    params.episodeId = nil
     _signature_headers(headers, path)
     local result = await(curl.get(
         api_url(path), {
@@ -321,8 +341,47 @@ function DananplayProvider:search()
     
 end
 
-function DananplayProvider:process_epid(epid, nodata)
-    
+local danmaku_type_map = {
+    [1] = 1, -- SCROLL
+    [4] = 3, -- BOTTOM
+    [5] = 2, -- TOP
+}
+
+---@param epid int
+function DananplayProvider:process_epid(epid, url, with_related, nodata)
+return async(function()
+    local result = await(M.get_comment({
+        episodeId = epid,
+        withRelated = false,
+        chConvert = 1,
+    }))
+    if result.error ~= nil or not result.result then
+        return base.new_process_error(result.error or 'dandanplay api error')
+    end
+    if result.result.count <= 0 or result.result.comments == nil then
+        return {}
+    end
+    local danmakus = fun.totable(fun.map(function(d)
+        ---@cast d DandanAPICommentData
+        ---@type string[]
+        local parts = fun.totable(rex.split(d.p--[[@cast -?]], ','))
+        ---@type Danmaku
+        return {
+            text = d.m,
+            time = tonumber(parts[1]),
+            type = danmaku_type_map[tonumber(parts[2])] or 1,
+            color = string.format('%06X', tonumber(parts[3]) or 0xFFFFFF),
+            extra = {
+                cid = d.cid,
+                userid = tonumber(parts[4])
+            }
+        }
+    end, result.result.comments))
+    return base.new_process_result(
+        danmakus,
+        new_source(epid, url, with_related)
+    )
+end)
 end
 
 M.provider = DananplayProvider
