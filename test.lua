@@ -14,103 +14,6 @@ require 'test_set_dandanapi'
 
 
 local M = {}
-
--- ---@async
--- function M.test(url)
---     if not url then
---         mp.msg.error('test url is required')
---         return
---     end
-
---     local bvid = url:match('(BV[a-zA-Z0-9]+)')
---     if not bvid then
---         mp.msg.error('cannot find BVID from', url)
---         return
---     end
-
---     local fetch_result = await(bilibili.video_info(nil, bvid))
---     if fetch_result.error then
---         mp.msg.info('test info error', fetch_result.error)
---         return
---     end
---     local result = fetch_result.result
---     if result == nil then
---         mp.msg.info('test info got nil')
---         return
---     end
---     if result.code ~= 0 then
---         mp.msg.info('test info got code', result.code, result.message)
---         return
---     end
---     local vinfo = {
---         aid = result.data.aid,
---         bvid = result.data.bvid,
---         cid = result.data.cid,
---         title = result.data.title,
---         desc = result.data.desc,
---         pages = result.data.pages,
---     }
---     mp.msg.info(json.dumps(vinfo, 2))
-
---     local danmaku_result = await(bilibili.get_danmaku_from_cid(result.data.cid))
---     if danmaku_result == nil then
---         mp.msg.info('test danmaku fetch got nil')
---         return
---     end
---     if danmaku_result.error then
---         mp.msg.info('test danmaku fetch error', danmaku_result.error)
---         return
---     end
---     local result_d = danmaku_result.result
---     if result_d == nil then
---         mp.msg.info('test danmaku fetch got empty result')
---         return
---     end
---     if danmaku_result.result ~= nil then
---         local danmakus = bilibili.parse_danmaku_xml(danmaku_result.result)
---         if danmakus ~= nil then
---             table.sort(danmakus, function(a, b)
---                 return a.time < b.time
---             end)
---             for i = #danmakus, 1, -1 do
---                 local d = danmakus[i]
---                 if d.extra.block_level < 7 then
---                     table.remove(danmakus, i)
---                 elseif d.text == '切换简体' then
---                     table.remove(danmakus, i)
---                 end
---             end
---             -- for _, d in ipairs(danmakus) do
---             --     if d.type > 3 then
---             --         debug_msgf('TB time: %.2f type: %d text: %s', d.time, d.type, d.text)
---             --     end
---             -- end
---             -- local pre_20 = {}
---             -- table.sort(danmakus, function(a, b)
---             --     return a.time < b.time
---             -- end)
---             -- for i, d in ipairs(danmakus) do
---             --     if i > 20 then
---             --         break
---             --     end
---             --     table.insert(pre_20, d)
---             -- end
---             -- mp.msg.info(require('elxlibs.json').dumps(pre_20, 2))
---             local render_cls = require('render')
---             if test_render == nil then
---                 test_render = render_cls()
---             end
---             test_render:add_source({id = vinfo.cid, name = "bilibili", cid = vinfo.cid}, danmakus)
---             if not test_render.is_running then
---                 test_render:start()
---                 test_render:enable()
---             end
---         end
---     end
-
---     mp.msg.info('TEST END')
--- end
-
 local commands = {}
 
 local source_manager = source_m.SourceManager()
@@ -132,7 +35,6 @@ end
 
 local url_patt = rex.safe_new[[^([a-z][a-z0-9+\.-]*:\/\/)?([\da-z\.-]+)\.([a-z\.]{2,6})([\/\w\.\-\?&\+=\#~%]*)$]]
 function commands.add(...)
-    debug_msg('TEST add')
     ---@type asyncio.Task<_ProcessResult?>[]
     local ts = {}
     for _, p in ipairs({...}) do
@@ -157,7 +59,6 @@ function commands.remove(...)
 end
 
 function commands.enable(source)
-    debug_msg('TEST enable')
     if source ~= nil then
         test_render:enable_source({id = source, name = nil})
     else
@@ -166,7 +67,6 @@ function commands.enable(source)
 end
 
 function commands.set_block_level(source, level)
-    debug_msg('TEST set_block_level')
     local function set(s)
         if s ~= nil and s.source.name == "bilibili" then
             process_block_level(s.data, level)
@@ -179,11 +79,10 @@ function commands.set_block_level(source, level)
             set(test_render:get_source(s.id))
         end
     end
-    test_render:_all_dirty()
+    test_render:_invalidate(INVALIDATE_PREPARE)
 end
 
 function commands.disable(source)
-    debug_msg('TEST disable')
     if source ~= nil then
         test_render:disable_source({id = source, name = nil})
     else
@@ -192,7 +91,6 @@ function commands.disable(source)
 end
 
 function commands.set_delay(source, delay, start, end_)
-    debug_msg('TEST set_delay', source, delay, start, end_)
     if delay ~= nil then
         test_render:set_source_delay({id = source, name = nil}, tonumber(delay))
     else
@@ -206,7 +104,6 @@ function commands.set_delay(source, delay, start, end_)
 end
 
 function commands.update(key, val)
-    debug_msg('TEST update', key, val, type(val))
     if val == "yes" or val == "true" then
         val = true
     elseif val == "no" or val == "false" then
@@ -242,7 +139,8 @@ end
 
 function commands.search(...)
     local result = await(dandanplay.search({
-        keyword = table.concat({...}, ' ')
+        keyword = table.concat({...}, ' '),
+        v2 = true,
     }))
     if result.error then
         mp.msg.warn(result.error)
@@ -263,6 +161,7 @@ function M.test(command, ...)
     end
     if commands[command] ~= nil then
         local args = {...}
+        debug_msg('TEST', command .. '(' .. table.concat(args, ', ') .. ')')
         local _, err = xpcall(function()
             commands[command](table.unpack(args))
         end, debug.traceback)
