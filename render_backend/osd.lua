@@ -414,6 +414,9 @@ do
                 if val and self._render_opts.res_y ~= self.res_y then
                     self._render_opts.res_y = self.res_y
                     map[INVALIDATE_LAYOUT] = true
+                elseif val and self.osd_h ~= self._render_opts.res_y then
+                    self._render_opts.res_y = self.osd_h
+                    map[INVALIDATE_LAYOUT] = true
                 end
             end)
         end,
@@ -631,7 +634,9 @@ function DanmakuOsdRender:_render_ass(pos, sliced_pos, ass_events, is_scroll)
     for i, d in ipairs(danmakus) do
         ---@cast d _CalcedOsdRenderDanmaku
         -- debug_msgf('DanmakuOsdRender:_render_ass() time(%.5f, %.5f) %s', d.start_time, d.end_time, d.escaped_text)
-        if pos >= d.start_time and pos <= d.end_time then
+        if d.start_time > pos then
+            break
+        elseif d.end_time >= pos then
             local idx = idx_map[i]
             local offset = is_scroll and ctx.calc_offset_scroll or ctx.calc_offset_fixed
             if offset <= idx then
@@ -652,7 +657,10 @@ function DanmakuOsdRender:_render_ass(pos, sliced_pos, ass_events, is_scroll)
 
             -- debug_msgf('DanmakuOsdRender:_render_ass() time(%.2f, %.2f) %s type: %d move: %s', 
                 -- d.start_time, d.end_time, d.escaped_text, d.type, d.is_move)
-            if d.layout_dirty == false and d.is_move ~= nil then
+
+            if d.layout_dirty ~= false or d.is_move == nil then
+                -- continue
+            else
                 local ass_text
                 if d.ass_dirty ~= false then
                     d.ass_text = str_fmt(
