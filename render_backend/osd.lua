@@ -413,11 +413,24 @@ do
         end,
         follow_scale = function(self, map, val, finals)
             table.insert(finals, function()
+                local max_tracks
+                local function try_update_max_tracks()
+                    local screen = self._render_ctx.screen
+                    local max = get_max_tracks(self._render_opts.displayarea, self._render_opts.res_y, self._render_opts.fontsize)
+                    if screen.scroll.max_tracks ~= max then
+                        screen.scroll:_update("max_tracks", max)
+                    end
+                    if screen.fixed.max_tracks ~= max then
+                        screen.fixed:_update("max_tracks", max)
+                    end
+                end
                 if val and self._render_opts.res_y ~= self.res_y then
                     self._render_opts.res_y = self.res_y
+                    try_update_max_tracks()
                     map[INVALIDATE_LAYOUT] = true
-                elseif val and self.osd_h ~= self._render_opts.res_y then
+                elseif not val and self.osd_h ~= self._render_opts.res_y then
                     self._render_opts.res_y = self.osd_h
+                    try_update_max_tracks()
                     map[INVALIDATE_LAYOUT] = true
                 end
             end)
