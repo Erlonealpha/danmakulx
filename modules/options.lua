@@ -1,6 +1,7 @@
-local mp = require "mp"
-local amp = require "elxlibs.asyncio.amp"
-local asyncio = require "elxlibs.asyncio"
+local mp = require 'mp'
+local amp = require 'elxlibs.asyncio.amp'
+local asyncio = require 'elxlibs.asyncio'
+local va = require 'modules.validator'
 
 ---@class DanmakulxOptions
 -- Options
@@ -26,6 +27,29 @@ local asyncio = require "elxlibs.asyncio"
 -- Methods
 ---@field on_options_change fun(names: string[], cb: fun(changes: string[]))
 ---@field unregister fun(cb: fun(changes: string[]))
+---@field validators table<keyof DanmakulxOptions, RawValidator>
+
+local validators = {
+    autoload =              va.type_of("boolean"),
+    autoload_by_name =      va.type_of("boolean"),
+    autoload_name_pattern = va.type_of("string"),
+    dandanplay_api =        va.type_of("string"),
+    follow_scale =          va.type_of("boolean"),
+    scrolltime =            va.and_(va.type_of("number"), va.gt(0)),
+    fixedtime =             va.and_(va.type_of("number"), va.gt(0)),
+    fontname =              va.type_of("string"),
+    fontsize =              va.and_(va.type_of("number"), va.gt(0)),
+    shadow =                va.and_(va.type_of("number"), va.ge(0)),
+    border =                va.type_of("boolean"),
+    opacity =               va.and_(va.type_of("number"), va.ge(0), va.le(1)),
+    displayarea =           va.and_(va.type_of("number"), va.gt(0), va.le(1)),
+    outline =               va.and_(va.type_of("number"), va.gt(0), va.le(4)),
+    max_screen_danmaku =    va.and_(va.type_of("number"), va.ge(0)),
+    density =               va.in_({"normal", "more", "overlap"}),
+    res_x =                 va.or_(va.in_({"display-w", "display-h"}), va.and_(va.type_of("number"), va.gt(0))),
+    res_y =                 va.or_(va.in_({"display-w", "display-h"}), va.and_(va.type_of("number"), va.gt(0))),
+    debug =                 va.type_of("boolean"),
+}
 
 ---@diagnostic disable-next-line: missing-fields
 ---@type DanmakulxOptions
@@ -95,10 +119,160 @@ local function properties_change(changes)
     await(asyncio.gather(ts))
 end
 
-local mpob = mp.observe_property
-mp.observe_property = amp.observe_property
-require("mp.options").read_options(opts, mp.get_script_name(), properties_change)
-mp.observe_property = mpob
+local read_options
+do
+    -- converts val to type of desttypeval
+    local function typeconv(desttypeval, val)
+        if type(desttypeval) == "boolean" then
+            if val == "yes" then
+                val = true
+            elseif val == "no" then
+                val = false
+            else
+                mp.msg.error("Error: Can't convert '" .. val .. "' to boolean!")
+                val = nil
+            end
+        elseif type(desttypeval) == "number" then
+            if tonumber(val) ~= nil then
+                val = tonumber(val)
+            else
+                mp.msg.error("Error: Can't convert '" .. val .. "' to number!")
+                val = nil
+            end
+        end
+        return val
+    end
+
+    -- performs a deep-copy of the given option value
+    local function opt_copy(val)
+        return val -- no tables currently
+    end
+
+    -- compares the given option values for equality
+    local function opt_equal(val1, val2)
+        return val1 == val2
+    end
+
+    -- performs a deep-copy of an entire option table
+    local function opt_table_copy(opts)
+        local copy = {}
+        for key, value in pairs(opts) do
+            copy[key] = opt_copy(value)
+        end
+        return copy
+    end
+
+    ---@param options table
+    ---@param identifier string?
+    ---@param on_update fun(changes:string[])?
+    function read_options(options, identifier, on_update)
+        local option_types = opt_table_copy(options)
+        if identifier == nil then
+            identifier = mp.get_script_name()
+        end
+        mp.msg.debug("reading options for " .. identifier)
+
+        -- read config file
+        local conffilename = "script-opts/" .. identifier .. ".conf"
+        local conffile = mp.find_config_file(conffilename)
+        local f = conffile and io.open(conffile,"r")
+        if f == nil then
+            -- config not found
+            mp.msg.debug(conffilename .. " not found.")
+        else
+            -- config exists, read values
+            mp.msg.verbose("Opened config file " .. conffilename .. ".")
+            local linecounter = 1
+            for line in f:lines() do
+                ---@cast line string
+                if line:sub(#line) == "\r" then
+                    line = line:sub(1, #line - 1)
+                end
+                if string.find(line, "#") ~= 1 then
+                    local eqpos = string.find(line, "=")
+                    if eqpos ~= nil then
+                        local key = string.sub(line, 1, eqpos-1)
+                        local val = string.sub(line, eqpos+1)
+
+                        -- match found values with defaults
+                        if option_types[key] == nil then
+                            mp.msg.warn(conffilename..":"..linecounter..
+                                " unknown key '" .. key .. "', ignoring")
+                        else
+                            local convval = typeconv(option_types[key], val)
+                            if convval == nil then
+                                mp.msg.error(conffilename..":"..linecounter..
+                                    " error converting value '" .. val ..
+                                    "' for key '" .. key .. "'")
+                            else
+                                if pcall(validators[key]--[[@cast -?]], key, convval) then
+                                    options[key] = convval
+                                end
+                            end
+                        end
+                    end
+                end
+                linecounter = linecounter + 1
+            end
+            io.close(f)
+        end
+
+        --parse command-line options
+        local prefix = identifier.."-"
+        -- command line options are always applied on top of these
+        local conf_and_default_opts = opt_table_copy(options)
+
+        local function parse_opts(full, opt)
+            for key, val in pairs(full) do
+                if string.find(key, prefix, 1, true) == 1 then
+                    key = string.sub(key, string.len(prefix)+1)
+
+                    -- match found values with defaults
+                    if option_types[key] == nil then
+                        mp.msg.warn("script-opts: unknown key " .. key .. ", ignoring")
+                    else
+                        local convval = typeconv(option_types[key], val)
+                        if convval == nil then
+                            mp.msg.error("script-opts: error converting value '" .. val ..
+                                "' for key '" .. key .. "'")
+                        else
+                            
+                            opt[key] = convval
+                        end
+                    end
+                end
+            end
+        end
+
+        --initial
+        parse_opts(mp.get_property_native("options/script-opts"), options)
+
+        --runtime updates
+        if on_update then
+            local last_opts = opt_table_copy(options)
+
+            amp.observe_property("options/script-opts", "native", function(_, val)
+                local new_opts = opt_table_copy(conf_and_default_opts)
+                parse_opts(val, new_opts)
+                local changelist = {}
+                for k, v in pairs(new_opts) do
+                    if not opt_equal(last_opts[k], v) then
+                        -- copy to user
+                        options[k] = opt_copy(v)
+                        changelist[k] = true
+                    end
+                end
+                last_opts = new_opts
+                if next(changelist) ~= nil then
+                    on_update(changelist)
+                end
+            end)
+        end
+
+    end
+end
+
+read_options(opts, mp.get_script_name(), properties_change)
 
 ---@param names string[]
 ---@param cb fun(changes: string[])
@@ -121,5 +295,7 @@ function opts.unregister(cb)
         end
     end
 end
+
+opts.validators = validators
 
 return opts
