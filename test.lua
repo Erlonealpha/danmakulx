@@ -9,6 +9,7 @@ local render = require("render")
 local anitomy = require("modules.anitomy")
 local dandanplay = require("sources.dandanplay")
 local normalize_path = require("modules.parse")
+local fun = require("elxlib.elxlibs.fun")
 
 require 'test_set_dandanapi'
 
@@ -35,7 +36,7 @@ end
 
 local url_patt = rex.safe_new[[^([a-z][a-z0-9+\.-]*:\/\/)?([\da-z\.-]+)\.([a-z\.]{2,6})([\/\w\.\-\?&\+=\#~%]*)$]]
 function commands.add(...)
-    ---@type asyncio.Task<_ProcessResult?>[]
+    ---@type asyncio.Task<ProcessResult?>[]
     local ts = {}
     for _, p in ipairs({...}) do
         if url_patt:match(p) then
@@ -47,10 +48,15 @@ function commands.add(...)
     local results = await(asyncio.gather(ts))
     for _, result in ipairs(results) do
         if result ~= nil then
-            if result.source.name == "bilibili" then
-                process_block_level(result.data, 5)
+            if result.error then
+                mp.msg.warn(result.error)
+            else
+                ---@cast result _ProcessResult
+                if result.source.name == "bilibili" then
+                    process_block_level(result.data, 5)
+                end
+                test_render:add_source(result.source, result.data)
             end
-            test_render:add_source(result.source, result.data)
         end
     end
 end
@@ -138,14 +144,83 @@ function commands.match(name)
 end
 
 function commands.search(...)
+    local keyword = table.concat({...}, ' ')
+    if keyword == '' then
+        keyword = await(normalize_path(mp.get_property('path')))
+    end
     local result = await(dandanplay.search({
-        keyword = table.concat({...}, ' '),
+        keyword = keyword,
         v2 = true,
     }))
     if result.error then
         mp.msg.warn(result.error)
+        return
+    end
+    ---@cast result.result -?
+    if result.result.errorCode ~= 0 then
+        mp.msg.warn(result.result.errorMessage, result.result.errorDetail or '')
     else
-        mp.msg.info(json.dumps(result.result, 2))
+        local c = 0
+        mp.msg.info(fun.str_concat(fun.map(
+        ---@param ani DandanAPISearchAnimeDetails 
+        function(ani)
+            c = c + 1
+            return string.format(
+                "[%d] %d %s (%s)", 
+                c, ani.animeId, ani.animeTitle, ani.typeDescription)
+        end, result.result.animes), '\n'))
+    end
+end
+
+function commands.details(anime_id)
+    local result = await(dandanplay.bangumi_details(
+        anime_id
+    ))
+    if result.error then
+        mp.msg.warn(result.error)
+        return
+    end
+    ---@cast result.result -?
+    if result.result.errorCode ~= 0 then
+        mp.msg.warn(result.result.errorMessage, result.result.errorDetail or '')
+    else
+        local bgm = result.result.bangumi
+        ---@cast bgm -?
+        mp.msg.info(string.format("%s (%d)\n%s", bgm.animeTitle, bgm.animeId, fun.str_concat(fun.map(
+            ---@param ep DandanAPIBangumiEpisode
+            function(ep)
+                return string.format("[%s] %d %s", ep.episodeNumber, ep.episodeTitle, ep.episodeId)
+            end
+        ), bgm.episodes)))
+    end
+end
+
+function commands.add_dd(epid)
+    epid = tonumber(epid)
+    if epid == nil then
+        mp.msg.warn('cannot parse epid')
+        return
+    end
+    local p = source_manager:get('dandanplay', dandanplay.provider)
+    ---@cast p -?
+    local result = await(p:process_epid(epid))
+    if result.error then
+        mp.msg.warn(result.error)
+    else
+        ---@cast result _ProcessResult
+        test_render:add_source(result.source, result.data)
+    end
+end
+
+function commands.show(what, ...)
+    local function format_source()
+        
+    end
+    local function format_config()
+        
+    end
+    local function format_summary()
+        
     end
 end
 
