@@ -255,7 +255,7 @@ return async(function()
         return {ok = false, error = string.format('DandanAPI.get_comment: invalid episodeId %s', params.episodeId)}
     end
     local headers = {}
-    local path = api_v2(string.format('/search/comment/%d', params.episodeId))
+    local path = api_v2(string.format('/comment/%d', params.episodeId))
     params.episodeId = nil
     _signature_headers(headers, path)
     local result = await(curl.get(
@@ -342,17 +342,18 @@ function DananplayProvider:search()
 end
 
 local danmaku_type_map = {
-    [1] = 1, -- SCROLL
-    [4] = 3, -- BOTTOM
-    [5] = 2, -- TOP
+    [1] = 0, -- SCROLL
+    [4] = 2, -- BOTTOM
+    [5] = 1, -- TOP
 }
 
 ---@param epid int
+---@return asyncio.Coroutine<ProcessResult>
 function DananplayProvider:process_epid(epid, url, with_related, nodata)
 return async(function()
     local result = await(M.get_comment({
         episodeId = epid,
-        withRelated = false,
+        withRelated = true,
         chConvert = 1,
     }))
     if result.error ~= nil or not result.result then
@@ -364,7 +365,7 @@ return async(function()
     local danmakus = fun.totable(fun.map(function(d)
         ---@cast d DandanAPICommentData
         ---@type string[]
-        local parts = fun.totable(rex.split(d.p--[[@cast -?]], ','))
+        local parts = std.split(d.p--[[@cast -?]], ',')
         ---@type Danmaku
         return {
             text = d.m,
@@ -377,6 +378,10 @@ return async(function()
             }
         }
     end, result.result.comments))
+    if #danmakus > 0 then
+        debug_msg(json.dumps(danmakus[1], 2))
+        debug_msg(json.dumps(result.result.comments[1], 2))
+    end
     return base.new_process_result(
         danmakus,
         new_source(epid, url, with_related)

@@ -185,7 +185,7 @@ local function parse_danmaku_data(data)
     for _, d in ipairs(data) do
         table.insert(danmakus, {
             text = d.text,
-            color = utils.hex_rgb2bgr(tonumber(d.color:sub(2), 16) or 0xffff),
+            color = utils.hex_rgb2bgr(tonumber(d.color:sub(2), 16) or 0xFFFFFF),
             time = d.time / 10,
             type = d.position,
             extra = {
