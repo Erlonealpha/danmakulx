@@ -56,6 +56,7 @@ return async(function()
         if #extra > 0 then
             rv = rv .. ' ' .. table.concat(extra, ' ')
         end
+        ---@cast rv string
         return rv, nil
     else
         ---@diagnostic disable-next-line: redundant-return-value

@@ -10,8 +10,8 @@ local va = require 'modules.validator'
 ---@field autoload_name_pattern string  自动加载名称匹配模式
 ---@field dandanplay_api string         设置弹弹Play的后端API [默认官方]
 ---@field follow_scale boolean          弹幕跟随窗口缩放 [默认关闭]
----@field scrolltime number             滚动弹幕显式时间 [默认: 10]
----@field fixedtime number              固定弹幕的显示时间 [默认: 5]
+---@field scrolltime number             滚动弹幕显式时间 (0.0~25) [默认: 10]
+---@field fixedtime number              固定弹幕的显示时间 (0.0~25) [默认: 5]
 ---@field fontname string               弹幕字体 [默认: 'sans-serif']
 ---@field fontsize number               弹幕字体大小 [默认: 32]
 ---@field shadow number                 弹幕字体阴影 [默认: 0]
@@ -35,8 +35,8 @@ local validators = {
     autoload_name_pattern = va.type_of("string"),
     dandanplay_api =        va.type_of("string"),
     follow_scale =          va.type_of("boolean"),
-    scrolltime =            va.and_(va.type_of("number"), va.gt(0)),
-    fixedtime =             va.and_(va.type_of("number"), va.gt(0)),
+    scrolltime =            va.and_(va.type_of("number"), va.gt(0), va.le(25)),
+    fixedtime =             va.and_(va.type_of("number"), va.gt(0), va.le(25)),
     fontname =              va.type_of("string"),
     fontsize =              va.and_(va.type_of("number"), va.gt(0)),
     shadow =                va.and_(va.type_of("number"), va.ge(0)),
@@ -62,9 +62,9 @@ local opts = {
 
     -- 弹幕跟随窗口缩放，默认关闭
     follow_scale = false,
-    --滚动弹幕的显示时间
+    --滚动弹幕的显示时间 0.0~25
     scrolltime = 10.0,
-    --固定弹幕的显示时间
+    --固定弹幕的显示时间 0.0~25
     fixedtime = 5.0,
     --字体
     fontname = "sans-serif",
