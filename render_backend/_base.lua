@@ -265,7 +265,7 @@ function RenderContext:_register_events()
         self._on_display_fps_f = function (_, fps) call_if_not_nil(self.on_display_fps, fps, self, fps) end
     end
     if self._on_osd_dimentions_f == nil then
-        self._on_osd_dimentions_f = function(osd) call_if_not_nil(self.on_osd_dimentions, osd, self, osd) end
+        self._on_osd_dimentions_f = function(_, osd) call_if_not_nil(self.on_osd_dimentions, osd, self, osd) end
     end
     if self._on_playback_restart_f == nil then
         self._on_playback_restart_f = function() self:on_playback_restart() end
