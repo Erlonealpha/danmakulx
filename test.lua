@@ -186,12 +186,16 @@ function commands.details(anime_id)
     else
         local bgm = result.result.bangumi
         ---@cast bgm -?
+        if bgm.episodes == nil then
+            mp.msg.warn('find empty episodes')
+            return
+        end
         mp.msg.info(string.format("%s (%d)\n%s", bgm.animeTitle, bgm.animeId, fun.str_concat(fun.map(
             ---@param ep DandanAPIBangumiEpisode
             function(ep)
-                return string.format("[%s] %d %s", ep.episodeNumber, ep.episodeTitle, ep.episodeId)
-            end
-        ), bgm.episodes)))
+                return string.format("[%s] %s %s", ep.episodeNumber, ep.episodeTitle, ep.episodeId)
+            end, bgm.episodes
+        ), '\n')))
     end
 end
 
@@ -221,6 +225,31 @@ function commands.show(what, ...)
     end
     local function format_summary()
         
+    end
+end
+
+local eval_env = {
+    fun = fun,
+    render = test_render,
+    source_manager = source_manager,
+}
+local eval_print = function(...)
+    mp.msg.info(fun.str_concat(fun.map(
+        function(item)
+            if type(item) == "table" then
+                return json.dumps(item, 2)
+            else
+                return item
+            end
+        end, {...}
+    ), ' '))
+end
+function commands.eval(...)
+    local fn, err = load('return ' .. fun.str_concat({...}, ' '), 'test.eval', 't', eval_env)
+    if err then
+        mp.msg.warn('eval error:', err)
+    else
+        eval_print(fn())
     end
 end
 
