@@ -26,7 +26,9 @@ end
 local OsdRenderContext = std.class.new('OsdRenderContext', {base.RenderContext})
 ---@param render DanmakuOsdRender
 function OsdRenderContext:__init(render)
+    debug_msgf("OsdRenderContext:__init(%s)", render)
     std.super(OsdRenderContext, self, base.RenderContext):__init(render)
+    self.refresh_tick = 1 / 60
     self.source_dirty = true
     self.prepare_dirty = true
     self.sliced_dirty = true
@@ -37,14 +39,23 @@ function OsdRenderContext:__init(render)
 end
 
 function OsdRenderContext:start()
-    local render = self.render
     local opts = self.options
-    if not opts.follow_scale and render.osd_h then
-        opts.res_y = render.osd_h
+    self.pause = mp.get_property_bool('pause')
+    self.fps = mp.get_property_number('display-fps', 120)
+    local osd = mp.get_property_native('osd-dimensions')
+    self.osd_w = osd.w
+    self.osd_h = osd.h
+    self.refresh_tick = 1 / self.fps
+    self.res_x = opts.res_x
+    --    self.res_y: base, can only changed by user
+    -- options.res_y: can changed by state change (effective)
+    self.res_y = opts.res_y
+    if not opts.follow_scale and self.osd_h then
+        opts.res_y = self.osd_h
     end
     self.screen = algo.new_screen(
-        render.res_x, 
-        render.res_y, 
+        self.res_x, 
+        self.res_y, 
         opts.fontsize, 
         (opts.displayarea < 1 and opts.displayarea > 0)
             and get_max_tracks(opts.displayarea, opts.res_y, opts.fontsize) 
@@ -78,7 +89,6 @@ local DanmakuOsdRender = std.class.new("DanmakuOsdRender")
 
 function DanmakuOsdRender:__init()
     debug_msg('DanmakuOsdRender:__init()')
-    self.refresh_tick = 1 / 60
     self.is_running = false
     self.is_rendering = false
     self.is_enable = true
@@ -94,24 +104,12 @@ function DanmakuOsdRender:_init()
     self.is_rendering = false
     self.is_enable = true
 
-    self.pause = mp.get_property_bool('pause')
-    self.fps = mp.get_property_number('display-fps', 120)
-    local osd = mp.get_property_native('osd-dimensions')
-    self.osd_w = osd.w
-    self.osd_h = osd.h
-    self.refresh_tick = 1 / self.fps
-
     if self.context == nil then
         self.context = OsdRenderContext(self)
     else
         -- sync options
         self.context:update_options()
     end
-    local render_opts = self.context.options
-    self.res_x = render_opts.res_x
-    --    self.res_y: base, can only changed by user
-    -- options.res_y: can changed by state change
-    self.res_y = render_opts.res_y
 
     self._event = locks.Event()
 end
@@ -128,6 +126,7 @@ function DanmakuOsdRender:start()
 
     self._render_task = asyncio.create_task(function()
         local await = await
+        local ctx = self.context
         local coro = async(function()
             local loop = asyncio.loops.get_running_loop()
             while true do
@@ -137,12 +136,12 @@ function DanmakuOsdRender:start()
                     -- debug_msg('DanmakuOsdRender:_render_task wait event done')
                 end
                 self:_render()
-                if self.pause then
+                if ctx.pause then
                     self._event:clear()
                 end
                 -- sleep
                 local fut = loop:create_future()
-                local handle = loop:call_later(self.refresh_tick, function()
+                local handle = loop:call_later(ctx.refresh_tick, function()
                     fut:set_result()
                 end)
                 fut:__try_await()
@@ -309,7 +308,7 @@ end
 -- -> _render call _request_tick()
 -- -> _event:clear()
 function DanmakuOsdRender:_request_tick()
-    if self.is_enable then
+    if self.is_enable and not self:_handle_render_err() then
         self._event:set()
     end
 end
@@ -566,7 +565,7 @@ function DanmakuOsdRender:_handle_render_err(from_stop)
 end
 
 function DanmakuOsdRender:_add_vf_fps()
-    mp.commandv("vf", "append", string.format("@danmakulx:fps=%d", self.fps or 120))
+    mp.commandv("vf", "append", string.format("@danmakulx:fps=%d", self.context.fps or 120))
 end
 
 function DanmakuOsdRender:_remove_vf_fps()
@@ -670,7 +669,7 @@ do
                     self.options.res_y = self.res_y
                     try_update_max_tracks()
                     map[INVALIDATE_LAYOUT] = true
-                elseif not val and self.osd_h ~= self.options.res_y then
+                elseif not val and self.osd_h ~= nil and self.osd_h ~= self.options.res_y then
                     self.options.res_y = self.osd_h
                     try_update_max_tracks()
                     map[INVALIDATE_LAYOUT] = true
@@ -704,20 +703,19 @@ OsdRenderContext.option_update_dispatch_map = option_update_dispatch_map
 OsdRenderContext.invalidate_dispatch_map = invalidate_dispatch_map
 
 function OsdRenderContext:on_pause(pause)
-    local render = self.render
-    if pause ~= nil and pause ~= render.pause then
+    if pause ~= nil and pause ~= self.pause then
         if not pause then
-            render:_request_tick()
+            self.render:_request_tick()
         end
-        render.pause = pause
+        self.pause = pause
     end
 end
 
 function OsdRenderContext:on_display_fps(fps)
     local render = self.render
-    if fps ~= nil and fps ~= render.fps then
-        render.refresh_tick = 1 / fps
-        render.fps = fps
+    if fps ~= nil and fps ~= self.fps then
+        self.refresh_tick = 1 / fps
+        self.fps = fps
         render:_remove_vf_fps()
         render:_add_vf_fps()
     end
@@ -728,9 +726,8 @@ function OsdRenderContext:on_playback_restart()
 end
 
 function OsdRenderContext:on_osd_dimentions(osd)
-    local render = self.render
-    render.osd_w = osd.w
-    render.osd_h = osd.h
+    self.osd_w = osd.w
+    self.osd_h = osd.h
     local opts = self.options
     if not opts.follow_scale then
         if opts.res_y ~= osd.h then
@@ -742,10 +739,9 @@ function OsdRenderContext:on_osd_dimentions(osd)
                 self.screen.scroll:_update("max_tracks", max_tracks)
                 self.screen.fixed:_update("max_tracks", max_tracks)
             end
-            self:invalidate(INVALIDATE_LAYOUT)
+            self.render:_invalidate(INVALIDATE_LAYOUT)
         end
     end
-    render:_request_tick()
 end
 
 return DanmakuOsdRender
